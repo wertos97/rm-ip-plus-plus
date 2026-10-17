@@ -1,0 +1,978 @@
+"""Zakladka sterowania jedna kamera: PTZ (trzymanie + krok), zoom, focus,
+ekspozycja, WB, presety, status. Wszystko przez zweryfikowane CGI."""
+from __future__ import annotations
+
+from PySide6.QtCore import Qt, QThread, Signal, QTimer
+from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import (
+    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QHBoxLayout,
+    QInputDialog, QLabel, QMessageBox, QPushButton, QScrollArea, QSlider,
+    QSpinBox, QTabWidget, QVBoxLayout, QWidget,
+)
+
+try:
+    from .cam_control import CameraAPI
+    from .human import IRIS_F, SHUTTER_50P, expcomp_db, fmt_deg, gain_db, pan_deg, tilt_deg, zoom_x
+except ImportError:
+    from cam_control import CameraAPI  # noqa: E402
+    from human import IRIS_F, SHUTTER_50P, expcomp_db, fmt_deg, gain_db, pan_deg, tilt_deg, zoom_x  # noqa: E402
+
+DIRS = [("up-left", "↖", 0, 0), ("up", "↑", 0, 1), ("up-right", "↗", 0, 2),
+        ("left", "←", 1, 0), ("home", "⌂", 1, 1), ("right", "→", 1, 2),
+        ("down-left", "↙", 2, 0), ("down", "↓", 2, 1), ("down-right", "↘", 2, 2)]
+
+
+class HoldButton(QPushButton):
+    """Przycisk trzymany: press=start, release=stop. Hover nic nie wysyla."""
+
+    def __init__(self, label, on_press, on_release):
+        super().__init__(label)
+        self._on_press = on_press
+        self._on_release = on_release
+        self._held = False
+        self.setMinimumSize(52, 44)
+        self.setFocusPolicy(Qt.NoFocus)
+
+    def mousePressEvent(self, e):
+        self._held = True
+        try:
+            self._on_press()
+        except Exception:
+            pass
+        super().mousePressEvent(e)
+
+    def _release(self):
+        if not self._held:
+            return
+        self._held = False
+        try:
+            self._on_release()
+        except Exception:
+            pass
+
+    def mouseReleaseEvent(self, e):
+        self._release()
+        super().mouseReleaseEvent(e)
+
+    def leaveEvent(self, e):
+        self._release()
+        super().leaveEvent(e)
+
+
+class ThumbLoader(QThread):
+    """Pobiera obrazki kafelkow w tle; wynik: {num: QPixmap}.
+
+    jobs: lista (num, kind) gdzie kind='preset' (still_N.jpg, fallback
+    miniaturka 64x36 z kamery) lub 'frame' (tylko still frame_N.jpg).
+    Loader jest pasywny - nigdy nie rusza kamery.
+    """
+    done = Signal(object)  # object, nie dict - QPixmap nie konwertuje sie do QVariantMap
+
+    def __init__(self, api: CameraAPI, jobs: list[tuple[int, str]]):
+        super().__init__()
+        self.api = api
+        self.jobs = jobs
+
+    def run(self):
+        import os, tempfile
+        out: dict[int, QPixmap] = {}
+        cache = os.path.join(tempfile.gettempdir(), "rmip_thumbs", self.api.ip.replace(".", "_"))
+        os.makedirs(cache, exist_ok=True)
+        for num, kind in self.jobs:
+            try:
+                data = None
+                fp = os.path.join(cache, f"{'still' if kind == 'preset' else 'frame'}_{num}.jpg")
+                if os.path.exists(fp):
+                    with open(fp, "rb") as f:
+                        data = f.read()
+                elif kind == "preset":
+                    data = self.api.thumb(num)
+                    if data and len(data) > 5000:
+                        # miniaturka 64x36 z kamery - nie zapisuj, za slaba
+                        pm = QPixmap()
+                        if pm.loadFromData(data):
+                            out[num] = pm
+                        continue
+                    if data:
+                        with open(fp, "wb") as f:
+                            f.write(data)
+                if data:
+                    pm = QPixmap()
+                    if pm.loadFromData(data):
+                        out[num] = pm
+            except Exception:
+                continue
+        self.done.emit(out)
+
+
+def save_still(api: CameraAPI, name: str) -> bool:
+    """Zapisuje ostry still do cache. Zwraca powodzenie."""
+    import os, tempfile
+    try:
+        data = api.still()
+        if not data:
+            return False
+        cache = os.path.join(tempfile.gettempdir(), "rmip_thumbs", api.ip.replace(".", "_"))
+        os.makedirs(cache, exist_ok=True)
+        with open(os.path.join(cache, name), "wb") as f:
+            f.write(data)
+        return True
+    except Exception:
+        return False
+
+
+class PresetPanel(QWidget):
+    """Siatka presetow 1-256 (stronicowana po 16): przywolanie/zapis/czyszczenie/nazwy."""
+
+    def __init__(self, api: CameraAPI, log, names: dict[int, str] | None = None):
+        super().__init__()
+        self.api = api
+        self.log = log
+        self.names = dict(names or {})
+        self.thumbs: dict[int, QPixmap] = {}
+        self.page = 0
+        self.mode = "recall"
+        self._build()
+        self.reload()
+
+    def _build(self):
+        v = QVBoxLayout(self)
+        top = QHBoxLayout()
+        v.addLayout(top)
+        self.btn_recall = QPushButton("Przywolaj")
+        self.btn_recall.setCheckable(True)
+        self.btn_recall.setChecked(True)
+        self.btn_save = QPushButton("Zapisz")
+        self.btn_save.setCheckable(True)
+        for b, m in ((self.btn_recall, "recall"), (self.btn_save, "save")):
+            b.clicked.connect(lambda _, mm=m: self.set_mode(mm))
+            top.addWidget(b)
+        top.addWidget(QLabel("Szybkosc:"))
+        self.sp_speed = QSpinBox()
+        self.sp_speed.setRange(1, 25)
+        self.sp_speed.setValue(10)
+        top.addWidget(self.sp_speed)
+        self.btn_clear = QPushButton("Wyczysc slot")
+        self.btn_clear.clicked.connect(self.clear_slot)
+        top.addWidget(self.btn_clear)
+        self.btn_rename = QPushButton("Nazwij")
+        self.btn_rename.clicked.connect(self.rename_slot)
+        top.addWidget(self.btn_rename)
+        self.btn_thumbs = QPushButton("Generuj miniaturki")
+        self.btn_thumbs.setToolTip("Przejedzie zdefiniowane presety i dopisze miniaturki (kamera bedzie sie ruszac!).")
+        self.btn_thumbs.clicked.connect(self.generate_thumbs)
+        top.addWidget(self.btn_thumbs)
+        nav = QHBoxLayout()
+        v.addLayout(nav)
+        self.btn_prev = QPushButton("◀ 1-16")
+        self.btn_prev.clicked.connect(lambda: self.set_page(self.page - 1))
+        nav.addWidget(self.btn_prev)
+        self.lb_page = QLabel()
+        nav.addWidget(self.lb_page, 1)
+        self.btn_next = QPushButton("241-256 ▶")
+        self.btn_next.clicked.connect(lambda: self.set_page(self.page + 1))
+        nav.addWidget(self.btn_next)
+        self.grid = QGridLayout()
+        v.addLayout(self.grid, 1)
+        self.slot = 1
+
+    def set_mode(self, m):
+        self.mode = m
+        self.btn_recall.setChecked(m == "recall")
+        self.btn_save.setChecked(m == "save")
+        base = self.page * 16
+        action = "przywolanie" if m == "recall" else "ZAPIS (nadpisze slot!)"
+        self.lb_page.setText(f"Sloty {base + 1}-{base + 16} (klik = {action})")
+
+    def set_page(self, p):
+        self.page = max(0, min(15, p))
+        self.reload()
+
+    def reload(self):
+        while self.grid.count():
+            w = self.grid.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        base = self.page * 16
+        action = "przywolanie" if self.mode == "recall" else "ZAPIS (nadpisze slot!)"
+        self.lb_page.setText(f"Sloty {base + 1}-{base + 16} (klik = {action})")
+        self.btn_prev.setText(f"◀ {max(1, base - 15)}-{base}" if base else "◀")
+        self.btn_next.setText(f"{base + 17}-{base + 32} ▶" if base < 240 else "▶")
+        for i in range(16):
+            num = base + i + 1
+            name = self.names.get(num, "")
+            from PySide6.QtWidgets import QSizePolicy, QToolButton
+            b = QToolButton()
+            b.setText(f"{num} · {name}" if name else str(num))
+            b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            b.setMinimumSize(96, 110)
+            f = b.font()
+            f.setPointSize(11)
+            b.setFont(f)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            b.clicked.connect(lambda _, n=num: self.activate(n))
+            pm = self.thumbs.get(num)
+            if pm is not None:
+                # miniaturki kamery zawsze 16:9 - skaluj z zachowaniem proporcji
+                iso = pm.scaled(208, 117, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                b.setIcon(iso)
+                b.setIconSize(iso.size())
+            self.grid.addWidget(b, i // 4, i % 4)
+        for i in range(4):
+            self.grid.setRowStretch(i, 1)
+            self.grid.setColumnStretch(i, 1)
+        self.load_thumbs([n for n in (base + i + 1 for i in range(16))
+                          if n in self.names and n not in self.thumbs])
+
+    def load_thumbs(self, nums):
+        if not nums:
+            return
+        if hasattr(self, "_tl") and self._tl.isRunning():
+            return
+        self._tl = ThumbLoader(self.api, [(n, "preset") for n in nums])
+        self._tl.done.connect(self.apply_thumbs)
+        self._tl.start()
+
+    def apply_thumbs(self, thumbs: dict):
+        new = {k: v for k, v in thumbs.items() if k not in self.thumbs}
+        if not new:
+            return
+        self.thumbs.update(new)
+        self.reload()
+
+    def generate_thumbs(self):
+        defined = sorted(self.names)
+        if not defined:
+            QMessageBox.information(self, "Miniaturki", "Brak zdefiniowanych presetow.")
+            return
+        if QMessageBox.question(
+                self, "Generuj miniaturki",
+                f"Kamera przejedzie {len(defined)} presetow i dopisze miniaturki. Kontynuowac?",
+                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+        import time
+        self.log(f"[{self.api.ip}] Generowanie miniaturek ({len(defined)})...")
+        QApplication = None
+        try:
+            from PySide6.QtWidgets import QApplication as _QA
+            QApplication = _QA
+        except Exception:
+            pass
+        for num in defined:
+            ok, msg = self.api.preset_recall(num)
+            if not ok:
+                self.log(f"[{self.api.ip}] preset {num}: BLAD {msg[:80]}")
+                continue
+            # czekaj na idle (max 15 s)
+            t0 = time.time()
+            while time.time() - t0 < 15:
+                if QApplication is not None:
+                    QApplication.processEvents()
+                time.sleep(0.5)
+                ok, pt = self.api.status()
+                if ok and isinstance(pt, dict) and "moving" not in pt.get("PtzfStatus", ""):
+                    break
+            name = self.names.get(num, f"Preset{num}")
+            ok, msg = self.api.preset_set(num, name, "on")
+            still_ok = save_still(self.api, f"still_{num}.jpg") if ok else False
+            self.log(f"[{self.api.ip}] miniaturka {num}: {'OK' if ok else 'BLAD ' + msg[:80]}"
+                     + ("" if still_ok else " (slaby kadr z kamery)"))
+        # wyczysc cache i przeladuj
+        try:
+            import os, shutil, tempfile
+            shutil.rmtree(os.path.join(tempfile.gettempdir(), "rmip_thumbs",
+                                       self.api.ip.replace(".", "_")), ignore_errors=True)
+        except Exception:
+            pass
+        self.thumbs = {}
+        self.load_thumbs([n for n in defined if n in range(self.page * 16 + 1, self.page * 16 + 17)])
+        self.log(f"[{self.api.ip}] Gotowe.")
+
+    def refresh_names(self, names):
+        self.names = dict(names)
+        self.reload()
+
+    def activate(self, num):
+        self.slot = num
+        if self.mode == "recall":
+            ok, msg = self.api.preset_recall(num, self.sp_speed.value())
+            self.log(f"[{self.api.ip}] Preset {num} przywolaj: {'OK' if ok else 'BLAD ' + msg[:100]}")
+            if not ok:
+                QMessageBox.warning(self, "Preset", msg[:300])
+        else:
+            name, okd = QInputDialog.getText(self, "Zapisz preset",
+                                             f"Nazwa presetu {num}:",
+                                             text=self.names.get(num, f"Preset{num}"))
+            if not okd:
+                return
+            name = self.names.get(num, f"Preset{num}")
+            ok, msg = self.api.preset_set(num, name, "on")
+            self.log(f"[{self.api.ip}] Preset {num} zapisz: {'OK' if ok else 'BLAD ' + msg[:100]}")
+            if ok:
+                save_still(self.api, f"still_{num}.jpg")  # ostry kadr od razu
+                ok2, names = self.api.preset_list()
+                if ok2:
+                    self.refresh_names(names)
+
+    def clear_slot(self):
+        ok, msg = self.api.preset_clear(self.slot)
+        self.log(f"[{self.api.ip}] Preset {self.slot} wyczysc: {'OK' if ok else 'BLAD ' + msg[:100]}")
+        if ok:
+            try:
+                import os, tempfile
+                fp = os.path.join(tempfile.gettempdir(), "rmip_thumbs",
+                                  self.api.ip.replace(".", "_"), f"still_{self.slot}.jpg")
+                if os.path.exists(fp):
+                    os.remove(fp)
+                self.thumbs.pop(self.slot, None)
+            except Exception:
+                pass
+            ok2, names = self.api.preset_list()
+            if ok2:
+                self.refresh_names(names)
+
+    def rename_slot(self):
+        name, okd = QInputDialog.getText(self, "Nazwa presetu", f"Slot {self.slot}:",
+                                         text=self.names.get(self.slot, ""))
+        if not okd:
+            return
+        ok, msg = self.api.preset_rename(self.slot, name)
+        self.log(f"[{self.api.ip}] Preset {self.slot} nazwa: {'OK' if ok else 'BLAD ' + msg[:100]}")
+        if ok:
+            self.names[self.slot] = name
+            self.reload()
+
+
+class PadButton(QPushButton):
+    """Jeden pad do dwoch trybow: jazda (przytrzymaj) albo krok (klik).
+    Stop wysylany tylko po faktycznym wcisnieciu (hover nic nie robi)."""
+
+    def __init__(self, label, action):
+        super().__init__(label)
+        self._action = action  # fn(hold: bool)
+        self._held = False
+        self.setMinimumSize(68, 56)
+        f = self.font()
+        f.setPointSize(18)
+        f.setBold(True)
+        self.setFont(f)
+        self.setFocusPolicy(Qt.NoFocus)
+
+    def mousePressEvent(self, e):
+        self._held = True
+        try:
+            self._action(True)
+        except Exception:
+            pass
+        super().mousePressEvent(e)
+
+    def _release(self):
+        if not self._held:
+            return
+        self._held = False
+        try:
+            self._action(False)
+        except Exception:
+            pass
+
+    def mouseReleaseEvent(self, e):
+        self._release()
+        super().mouseReleaseEvent(e)
+
+    def leaveEvent(self, e):
+        self._release()  # zjechanie z wcisnietego przycisku = stop (bezpieczenstwo)
+        super().leaveEvent(e)
+
+
+class FramePanel(QWidget):
+    """Kadry PTZ (lokalne, tylko pozycja - imaging nietkniety).
+
+    W przeciwienstwie do presetow kamery (std: PTZ + imaging), kadr zapisuje
+    wylacznie AbsolutePTZF w konfiguracji aplikacji i przywraca jednym
+    rozkazem - kolory/WB/ekspozycja nigdy sie nie zmieniaja.
+    """
+
+    def __init__(self, api: CameraAPI, log, frames, on_change):
+        super().__init__()
+        self.api = api
+        self.log = log
+        self.frames: list = list(frames or [None] * 16)
+        while len(self.frames) < 16:
+            self.frames.append(None)
+        self.on_change = on_change
+        self.mode = "recall"
+        self.slot = 0
+        self.thumbs: dict[int, QPixmap] = {}
+        self._build()
+        self.reload()
+
+    def _build(self):
+        from PySide6.QtWidgets import QSizePolicy, QToolButton
+        v = QVBoxLayout(self)
+        top = QHBoxLayout()
+        v.addLayout(top)
+        self.btn_recall = QPushButton("Idz do")
+        self.btn_recall.setCheckable(True)
+        self.btn_recall.setChecked(True)
+        self.btn_save = QPushButton("Zapisz")
+        self.btn_save.setCheckable(True)
+        for b, m in ((self.btn_recall, "recall"), (self.btn_save, "save")):
+            b.clicked.connect(lambda _, mm=m: self.set_mode(mm))
+            top.addWidget(b)
+        self.btn_fclear = QPushButton("Wyczysc")
+        self.btn_fclear.setToolTip("Usuwa kadr z wybranego slotu.")
+        self.btn_fclear.clicked.connect(self.clear_frame)
+        top.addWidget(self.btn_fclear)
+        hint = QLabel("Kadr = sama pozycja PTZ (bez ekspozycji/WB).")
+        hint.setStyleSheet("color: gray;")
+        top.addWidget(hint, 1)
+        self.grid = QGridLayout()
+        v.addLayout(self.grid, 1)
+        self.slot = 0
+
+    def set_mode(self, m):
+        self.mode = m
+        self.btn_recall.setChecked(m == "recall")
+        self.btn_save.setChecked(m == "save")
+        self.reload()
+
+    def reload(self):
+        from PySide6.QtWidgets import QSizePolicy, QToolButton
+        while self.grid.count():
+            w = self.grid.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        for i in range(16):
+            fr = self.frames[i]
+            b = QToolButton()
+            b.setText(f"{i + 1} · {fr['name']}" if fr else str(i + 1))
+            b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            b.setMinimumSize(96, 110)
+            f = b.font()
+            f.setPointSize(11)
+            b.setFont(f)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            if fr:
+                b.setToolTip(f"PTZ {','.join(fr['ptzf'])} - klik: {self.mode}")
+            pm = self.thumbs.get(i)
+            if pm is not None:
+                iso = pm.scaled(208, 117, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                b.setIcon(iso)
+                b.setIconSize(iso.size())
+            b.clicked.connect(lambda _, n=i: self.activate(n))
+            self.grid.addWidget(b, i // 4, i % 4)
+        for i in range(4):
+            self.grid.setRowStretch(i, 1)
+            self.grid.setColumnStretch(i, 1)
+        self.load_thumbs()
+
+    def activate(self, i: int):
+        self.slot = i
+        if self.mode == "recall":
+            fr = self.frames[i]
+            if not fr:
+                QMessageBox.information(self, "Kadr", f"Slot {i + 1} pusty - przelacz na Zapisz.")
+                return
+            p, t, z, f = fr["ptzf"]
+            ok, msg = self.api.absolute_ptzf(p, t, z, f)
+            self.log(f"[{self.api.ip}] Kadr {i + 1} ({fr['name']}): {'OK' if ok else 'BLAD ' + msg[:100]}")
+            if not ok:
+                QMessageBox.warning(self, "Kadr", msg[:300])
+        else:
+            ok, pt = self.api.status()
+            if not ok or not isinstance(pt, dict) or "," not in pt.get("AbsolutePTZF", ""):
+                QMessageBox.warning(self, "Kadr", f"Nie odczytano pozycji: {pt}"[:200])
+                return
+            cur = pt["AbsolutePTZF"].split(",")[:4]
+            name, okd = QInputDialog.getText(self, "Zapisz kadr", f"Nazwa kadru {i + 1}:",
+                                             text=(self.frames[i] or {}).get("name", f"Kadr{i + 1}") if isinstance(self.frames[i], dict) else f"Kadr{i + 1}")
+            if not okd:
+                return
+            self.frames[i] = {"name": name or f"Kadr{i + 1}", "ptzf": cur}
+            save_still(self.api, f"frame_{i}.jpg")
+            self.on_change()
+            self.reload()
+            self.log(f"[{self.api.ip}] Kadr {i + 1} zapisany: {name} ({','.join(cur)}).")
+
+    def clear_frame(self):
+        if not isinstance(self.frames[self.slot], dict):
+            return
+        self.frames[self.slot] = None
+        try:
+            import os, tempfile
+            fp = os.path.join(tempfile.gettempdir(), "rmip_thumbs",
+                              self.api.ip.replace(".", "_"), f"frame_{self.slot}.jpg")
+            if os.path.exists(fp):
+                os.remove(fp)
+        except Exception:
+            pass
+        self.on_change()
+        self.reload()
+        self.log(f"[{self.api.ip}] Kadr {self.slot + 1} usuniety.")
+
+    def load_thumbs(self):
+        jobs = [(i, "frame") for i, fr in enumerate(self.frames)
+                if fr and i not in self.thumbs]
+        if not jobs:
+            return
+        if hasattr(self, "_tl") and self._tl.isRunning():
+            return
+        self._tl = ThumbLoader(self.api, jobs)
+        self._tl.done.connect(self.apply_thumbs)
+        self._tl.start()
+
+    def apply_thumbs(self, thumbs: dict):
+        new = {k: v for k, v in thumbs.items() if k not in self.thumbs}
+        if not new:
+            return
+        self.thumbs.update(new)
+        self.reload()
+
+
+class CameraTab(QWidget):
+    def __init__(self, ip: str, user: str, password: str, http_port: int = 80, log=None,
+                 frames=None, save_frames=None):
+        super().__init__()
+        self.api = CameraAPI(ip, user, password, http_port)
+        self.log = log or (lambda t: None)
+        self.preset_names: dict[int, str] = {}
+        self.frames: list = list(frames or [None] * 16)
+        while len(self.frames) < 16:
+            self.frames.append(None)
+        self.save_frames = save_frames or (lambda: None)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.pages = QTabWidget()
+        outer.addWidget(self.pages, 1)
+        ctrl = QWidget()
+        self._build(ctrl)
+        self.pages.addTab(ctrl, "Sterowanie")
+        self.preset_panel = PresetPanel(self.api, self.log_line)
+        self.pages.addTab(self.preset_panel, "Presety")
+        self.frame_panel = FramePanel(self.api, self.log_line, self.frames, self.on_frames_changed)
+        self.pages.addTab(self.frame_panel, "Kadry PTZ")
+        # dolny pasek: status + szybkie presety 1-8 (wypelnia szeroki ekran)
+        bottom = QHBoxLayout()
+        bottom.setContentsMargins(0, 4, 0, 0)
+        outer.addLayout(bottom)
+        bottom.addWidget(self.status, 1)
+        bottom.addWidget(QLabel("Kadry:"))
+        self.quick_btns: list[QPushButton] = []
+        for n in range(1, 7):
+            b = QPushButton(str(n))
+            b.setMinimumSize(64, 40)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.clicked.connect(lambda _, nn=n: self.quick_frame(nn))
+            bottom.addWidget(b)
+            self.quick_btns.append(b)
+        self.refresh_all()
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.poll_status)
+        self.timer.start(2000)
+
+    def log_line(self, t: str):
+        self.log(t)
+
+    def on_frames_changed(self):
+        self.frames = list(self.frame_panel.frames)
+        self.refresh_quick()
+        self.save_frames()
+
+    # ---------- budowa ----------
+    def _build(self, base: QWidget):
+        from PySide6.QtWidgets import QButtonGroup, QGroupBox, QRadioButton
+        root = QHBoxLayout(base)
+        root.setSpacing(12)
+
+        # ---- kolumna PTZ ----
+        gb_ptz = QGroupBox("PTZ")
+        gb_ptz.setMinimumWidth(300)
+        root.addWidget(gb_ptz, 1)
+        left = QVBoxLayout(gb_ptz)
+        pad = QGridLayout()
+        pad.setSpacing(6)
+        left.addLayout(pad)
+        for direction, label, r, c in DIRS:
+            if direction == "home":
+                b = QPushButton("HOME")
+                f = b.font()
+                f.setPointSize(11)
+                f.setBold(True)
+                b.setFont(f)
+                b.setMinimumSize(68, 56)
+                b.setFocusPolicy(Qt.NoFocus)
+                b.clicked.connect(lambda: self.run(self.api.home(), "Home"))
+            else:
+                b = PadButton(label, lambda hold, d=direction: self.pad_action(d, hold))
+            pad.addWidget(b, r, c)
+        mode_row = QHBoxLayout()
+        left.addLayout(mode_row)
+        self.rb_drive = QRadioButton("Jazda")
+        self.rb_drive.setChecked(True)
+        self.rb_step = QRadioButton("Krok")
+        self.rb_step.setToolTip("Tryb precyzji: klik strzalki = pojedynczy krok")
+        mode_row.addWidget(self.rb_drive)
+        mode_row.addWidget(self.rb_step)
+        mode_row.addStretch(1)
+        row = QHBoxLayout()
+        left.addLayout(row)
+        row.addWidget(QLabel("Szybkosc:"))
+        self.sl_speed = QSlider(Qt.Horizontal)
+        self.sl_speed.setRange(0, 24)
+        self.sl_speed.setValue(8)
+        self.sl_speed.setTickPosition(QSlider.TicksBelow)
+        self.sl_speed.setTickInterval(4)
+        self.sl_speed.valueChanged.connect(lambda v: self.lb_speed.setText("auto" if v == 0 else str(v)))
+        row.addWidget(self.sl_speed, 1)
+        self.lb_speed = QLabel("8")
+        self.lb_speed.setMinimumWidth(44)
+        f = self.lb_speed.font()
+        f.setPointSize(11)
+        f.setBold(True)
+        self.lb_speed.setFont(f)
+        row.addWidget(self.lb_speed)
+        row2 = QHBoxLayout()
+        left.addLayout(row2)
+        row2.addWidget(QLabel("Wielkosc kroku:"))
+        self.sp_step = QSpinBox()
+        self.sp_step.setRange(1, 2000)
+        self.sp_step.setValue(80)
+        self.sp_step.setMinimumWidth(90)
+        row2.addWidget(self.sp_step)
+        row2.addStretch(1)
+        self.status = QLabel("status...")
+        f = self.status.font()
+        f.setFamily("Consolas")
+        f.setPointSize(10)
+        self.status.setFont(f)
+        self.status.setWordWrap(True)
+        left.addStretch(1)
+
+        # ---- kolumna zoom/focus ----
+        gb_zf = QGroupBox("Zoom / Focus")
+        gb_zf.setMinimumWidth(280)
+        root.addWidget(gb_zf, 1)
+        mid = QVBoxLayout(gb_zf)
+        zr = QHBoxLayout()
+        mid.addLayout(zr)
+        for label, direction in (("W−", "wide"), ("T+", "tele")):
+            b = HoldButton(label, lambda d=direction: self.zoom_hold(d), lambda: self.zoom_stop())
+            b.setMinimumHeight(52)
+            f = b.font()
+            f.setPointSize(14)
+            f.setBold(True)
+            b.setFont(f)
+            zr.addWidget(b)
+        zr2 = QVBoxLayout()
+        mid.addLayout(zr2)
+        zr2.addWidget(QLabel("Szybkosc zoom:"))
+        zrow = QHBoxLayout()
+        zr2.addLayout(zrow)
+        self.sl_zspeed = QSlider(Qt.Horizontal)
+        self.sl_zspeed.setRange(0, 8)
+        self.sl_zspeed.setValue(3)
+        self.sl_zspeed.setTickPosition(QSlider.TicksBelow)
+        self.sl_zspeed.setTickInterval(2)
+        zrow.addWidget(self.sl_zspeed, 1)
+        self.lb_zspeed = QLabel("3")
+        self.lb_zspeed.setMinimumWidth(30)
+        self.sl_zspeed.valueChanged.connect(lambda v: self.lb_zspeed.setText(str(v)))
+        zrow.addWidget(self.lb_zspeed)
+        mid.addSpacing(8)
+        fr = QHBoxLayout()
+        mid.addLayout(fr)
+        for label, direction in (("Near", "near"), ("Far", "far")):
+            b = HoldButton(label, lambda d=direction: self.run(self.api.focus_move(d), f"Focus {d}"),
+                           lambda: self.run(self.api.stop("focus"), "Stop"))
+            b.setMinimumHeight(48)
+            fr.addWidget(b)
+        self.btn_af1 = QPushButton("OnePush AF")
+        self.btn_af1.setMinimumHeight(48)
+        self.btn_af1.clicked.connect(lambda: self.run(self.api.focus_move("onepushaf"), "OnePushAF"))
+        mid.addWidget(self.btn_af1)
+        fr2 = QHBoxLayout()
+        mid.addLayout(fr2)
+        fr2.addWidget(QLabel("Tryb focus:"))
+        self.cb_focus = QComboBox()
+        self.cb_focus.addItems(["auto", "manual"])
+        fr2.addWidget(self.cb_focus, 1)
+        self.btn_focus = QPushButton("Ustaw")
+        self.btn_focus.clicked.connect(lambda: self.run(
+            self.api.set_imaging(FocusMode=self.cb_focus.currentText()), "FocusMode"))
+        fr2.addWidget(self.btn_focus)
+        mid.addStretch(1)
+
+        # ---- kolumna obraz ----
+        gb_img = QGroupBox("Obraz")
+        root.addWidget(gb_img, 1)
+        right = QVBoxLayout(gb_img)
+        right.addWidget(QLabel("<b>Ekspozycja</b>"))
+        form = QFormLayout()
+        form.setSpacing(4)
+        right.addLayout(form)
+        self.cb_exp = QComboBox()
+        self.cb_exp.addItems(["auto", "shutter", "iris", "manual"])
+        form.addRow("Tryb:", self.cb_exp)
+        self.sl_iris = self._slider(form, "Iris:", 0, 25, lambda v: IRIS_F.get(v, "?"))
+        self.sl_gain = self._slider(form, "Gain:", 1, 13, gain_db)
+        self.sl_shut = self._slider(form, "Shutter:", 6, 33, lambda v: SHUTTER_50P.get(v, "?"))
+        self.sl_comp = self._slider(form, "Komp. (+/-):", 0, 14, expcomp_db)
+        self.btn_exp = QPushButton("Zastosuj ekspozycje")
+        self.btn_exp.setMinimumHeight(36)
+        self.btn_exp.clicked.connect(self.apply_exposure)
+        right.addWidget(self.btn_exp)
+        right.addSpacing(6)
+        right.addWidget(QLabel("<b>Balans bieli</b>"))
+        form2 = QFormLayout()
+        form2.setSpacing(4)
+        right.addLayout(form2)
+        self.cb_wb = QComboBox()
+        self.cb_wb.addItems(["auto", "indoor", "outdoor", "onepushwb", "atw", "manual"])
+        form2.addRow("Tryb:", self.cb_wb)
+        self.sl_cb = self._slider(form2, "B gain:", 0, 255)
+        self.sl_cr = self._slider(form2, "R gain:", 0, 255)
+        self.sl_wboff = self._slider(form2, "Offset:", 0, 14)
+        wbrow = QHBoxLayout()
+        right.addLayout(wbrow)
+        self.btn_wb = QPushButton("Zastosuj WB")
+        self.btn_wb.setMinimumHeight(36)
+        self.btn_wb.clicked.connect(self.apply_wb)
+        wbrow.addWidget(self.btn_wb)
+        self.btn_wb1 = QPushButton("OnePush WB")
+        self.btn_wb1.setMinimumHeight(36)
+        self.btn_wb1.clicked.connect(lambda: self.run(self.api.wb_onepush(), "OnePushWB"))
+        wbrow.addWidget(self.btn_wb1)
+        self.btn_reload = QPushButton("Odczytaj z kamery")
+        self.btn_reload.clicked.connect(self.refresh_all)
+        right.addWidget(self.btn_reload)
+        right.addStretch(1)
+
+    def _slider(self, form, label, lo, hi, fmt=None):
+        row = QHBoxLayout()
+        sl = QSlider(Qt.Horizontal)
+        sl.setRange(lo, hi)
+        lb = QLabel("?")
+        lb.setMinimumWidth(64)
+        lb.setProperty("val", "1")
+        f = lb.font()
+        f.setBold(True)
+        lb.setFont(f)
+        sl._fmt = fmt
+        if fmt is None:
+            sl.valueChanged.connect(lambda v: lb.setText(str(v)))
+        else:
+            sl.valueChanged.connect(lambda v: lb.setText(f"{v} ({sl._fmt(v)})"))
+        row.addWidget(sl, 1)
+        row.addWidget(lb)
+        form.addRow(label, row)
+        return sl
+
+    # ---------- akcje ----------
+    def pt_speed(self) -> int:
+        return self.sl_speed.value()
+
+    def run(self, result, what: str):
+        ok, msg = result
+        self.log(f"[{self.api.ip}] {what}: {'OK' if ok else 'BLAD ' + msg[:120]}")
+        if not ok:
+            QMessageBox.warning(self, what, msg[:300])
+
+    def pad_action(self, direction: str, hold: bool):
+        """"Jazda": press=start, release=stop (klik = min. 0,5 s ruchu).
+        "Krok": klik = 1 precyzyjny krok; przytrzymanie = plynny slizg (v1)."""
+        if self.rb_step.isChecked():
+            if hold:
+                self._crawl_dir = direction
+                self._gliding = False
+                QTimer.singleShot(300, lambda: self._glide_start(direction))
+            else:
+                if getattr(self, "_gliding", False):
+                    self._gliding = False
+                    self._crawl_dir = None
+                    self.run(self.api.stop("pantilt"), "Stop")
+                else:
+                    self._crawl_dir = None  # anuluj uzbrojony slizg
+                    self.step_move(direction)
+            return
+        import time as _time
+        if hold:
+            self._jog_token = getattr(self, "_jog_token", 0) + 1
+            self._jog_t0 = _time.monotonic()
+            self.run(self.api.move(direction, self.pt_speed()), f"Move {direction}")
+        else:
+            dt = _time.monotonic() - getattr(self, "_jog_t0", 0.0)
+            if dt < 0.5:
+                # krotki klik: dojedz do 0,5 s zeby ruch byl odczuwalny
+                # (wtedy Slow ON vs OFF widac golym okiem)
+                tok = getattr(self, "_jog_token", 0)
+                QTimer.singleShot(int((0.5 - dt) * 1000),
+                                  lambda: self._stop_if(tok))
+            else:
+                self.run(self.api.stop("pantilt"), "Stop")
+
+    def _stop_if(self, tok: int):
+        if tok == getattr(self, "_jog_token", -1):
+            self.run(self.api.stop("pantilt"), "Stop")
+
+    def _glide_start(self, direction: str):
+        if getattr(self, "_crawl_dir", None) != direction:
+            return
+        self._gliding = True
+        self.run(self.api.move(direction, 1), f"Slizg {direction}")
+
+    def _crawl_tick(self):
+        d = getattr(self, "_crawl_dir", None)
+        if d:
+            self.step_move(d)
+
+    def step_move(self, direction: str):
+        step = int(self.sp_step.value())
+        dpan = dtilt = 0
+        if "up" in direction:
+            dtilt = step
+        if "down" in direction:
+            dtilt = -step
+        if "left" in direction:
+            dpan = -step
+        if "right" in direction:
+            dpan = step
+        self.run(self.api.relative_pt(f"{dpan & 0xFFFF:04x}", f"{dtilt & 0xFFFF:04x}",
+                                      max(1, self.pt_speed() or 5)),
+                 f"Krok {direction} {step}")
+
+    def zoom_hold(self, direction: str):
+        self.run(self.api.zoom_move(direction, self.sl_zspeed.value()), f"Zoom {direction}")
+
+    def zoom_stop(self):
+        self.run(self.api.stop("zoom"), "Stop")
+
+    def apply_exposure(self):
+        self.run(self.api.set_imaging(
+            ExposureMode=self.cb_exp.currentText(),
+            ExposureIris=self.sl_iris.value(), ExposureGain=self.sl_gain.value(),
+            ExposureExposureTime=self.sl_shut.value(),
+            ExposureCompensation=self.sl_comp.value()), "Ekspozycja")
+
+    def apply_wb(self):
+        self.run(self.api.set_imaging(
+            WhiteBalanceMode=self.cb_wb.currentText(),
+            WhiteBalanceCbGain=self.sl_cb.value(), WhiteBalanceCrGain=self.sl_cr.value(),
+            WhiteBalanceOffset=self.sl_wboff.value()), "WB")
+
+    def status_text(self, pt: dict) -> str:
+        abspt = pt.get("AbsolutePTZF", "")
+        parts = abspt.split(",")
+        extra = ""
+        if len(parts) >= 3:
+            extra = (f"Pan {fmt_deg(pan_deg(parts[0]))} Tilt {fmt_deg(tilt_deg(parts[1]))} "
+                     f"Zoom ~{zoom_x(parts[2]):.1f}x")
+        st = pt.get("PtzfStatus", "")
+        return f"{extra} | {st}" if extra else f"PTZF={abspt} | {st}"
+
+    def quick_frame(self, num: int):
+        fr = self.frames[num - 1] if 1 <= num <= len(self.frames) else None
+        if not isinstance(fr, dict):
+            QMessageBox.information(self, "Kadr", f"Kadr {num} pusty - zapisz go w zakladce Kadry PTZ.")
+            return
+        p, t, z, f = fr["ptzf"]
+        ok, msg = self.api.absolute_ptzf(p, t, z, f)
+        self.log(f"[{self.api.ip}] Szybki kadr {num} ({fr['name']}): {'OK' if ok else 'BLAD ' + msg[:100]}")
+        if not ok:
+            QMessageBox.warning(self, "Kadr", msg[:300])
+
+    def quick_recall(self, num: int):
+        ok, msg = self.api.preset_recall(num)
+        self.log(f"[{self.api.ip}] Szybki preset {num}: {'OK' if ok else 'BLAD ' + msg[:100]}")
+        if not ok:
+            QMessageBox.warning(self, "Preset", msg[:300])
+
+    def refresh_quick(self):
+        for b, n in zip(self.quick_btns, range(1, 7)):
+            fr = self.frames[n - 1] if n - 1 < len(self.frames) else None
+            nm_ = fr.get("name", "") if isinstance(fr, dict) else ""
+            b.setText(f"{n} {nm_}"[:16] if nm_ else str(n))
+            b.setToolTip(f"Kadr {n}" + (f": {nm_}" if nm_ else " (pusty)"))
+            b.setStyleSheet("")
+        self._mark_quick()
+
+    def refresh_all(self):
+        ok, pt = self.api.status()
+        if ok and isinstance(pt, dict):
+            self.status.setText(self.status_text(pt))
+        ok, im = self.api.imaging()
+        if ok and isinstance(im, dict):
+            self._set_combo(self.cb_exp, im.get("ExposureMode", "auto"))
+            self._set_slider(self.sl_iris, im.get("ExposureIris"))
+            self._set_slider(self.sl_gain, im.get("ExposureGain"))
+            self._set_slider(self.sl_shut, im.get("ExposureExposureTime"))
+            self._set_slider(self.sl_comp, im.get("ExposureCompensation"))
+            self._set_combo(self.cb_wb, im.get("WhiteBalanceMode", "auto"))
+            self._set_slider(self.sl_cb, im.get("WhiteBalanceCbGain"))
+            self._set_slider(self.sl_cr, im.get("WhiteBalanceCrGain"))
+            self._set_slider(self.sl_wboff, im.get("WhiteBalanceOffset"))
+            self._set_combo(self.cb_focus, im.get("FocusMode", "auto"))
+        ok, names = self.api.preset_list()
+        if ok:
+            self.preset_names = names
+            self.preset_panel.refresh_names(names)
+        self.refresh_quick()
+
+    def _set_combo(self, cb, val):
+        i = cb.findText(str(val))
+        if i >= 0:
+            cb.setCurrentIndex(i)
+
+    def _set_slider(self, sl, val):
+        try:
+            if val is not None:
+                sl.setValue(int(val))
+        except (ValueError, TypeError):
+            pass
+
+    def poll_status(self):
+        if not self.isVisible():
+            return
+        ok, pt = self.api.status()
+        if ok and isinstance(pt, dict):
+            self.status.setText(self.status_text(pt))
+            self.follow_position(pt)
+
+    def follow_position(self, pt: dict):
+        """Podswietla kadr zgodny z biezaca pozycja (np. po ruchu z panelu RM-IP500).
+        Panelu nie da sie przechwycic (gada z kamera bezposrednio, zwykle po RS-422),
+        ale widac efekt - i to wystarczy zeby nadazyc."""
+        try:
+            cur = pt.get("AbsolutePTZF", "").split(",")[:4]
+            if len(cur) < 4:
+                return
+            curi = [int(x, 16) for x in cur]
+        except (ValueError, TypeError):
+            return
+        match = -1
+        for i, fr in enumerate(self.frames[:6]):
+            if not isinstance(fr, dict):
+                continue
+            try:
+                f = [int(x, 16) for x in fr["ptzf"][:4]]
+            except (ValueError, TypeError, KeyError):
+                continue
+            dp = min(abs(f[0] - curi[0]), 0x10000 - abs(f[0] - curi[0]))
+            dt = min(abs(f[1] - curi[1]), 0x10000 - abs(f[1] - curi[1]))
+            dz = abs(f[2] - curi[2])
+            if dp <= 40 and dt <= 40 and dz <= 80:
+                match = i
+                break
+        if match != getattr(self, "_follow", -2):
+            self._follow = match
+            self._mark_quick()
+
+    def _mark_quick(self):
+        match = getattr(self, "_follow", -1)
+        for b, n in zip(self.quick_btns, range(1, 7)):
+            fr = self.frames[n - 1] if n - 1 < len(self.frames) else None
+            nm_ = fr.get("name", "") if isinstance(fr, dict) else ""
+            mark = "▶ " if n - 1 == match else ""
+            b.setText(f"{mark}{n} {nm_}"[:16] if nm_ else f"{mark}{n}")
+            b.setStyleSheet("border: 2px solid #ff9e2c;" if n - 1 == match else "")
