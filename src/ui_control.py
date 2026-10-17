@@ -2,8 +2,8 @@
 ekspozycja, WB, presety, status. Wszystko przez zweryfikowane CGI."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QThread, Signal, QTimer
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QRectF
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QHBoxLayout,
     QInputDialog, QLabel, QMessageBox, QPushButton, QScrollArea, QSlider,
@@ -57,6 +57,113 @@ class HoldButton(QPushButton):
     def leaveEvent(self, e):
         self._release()
         super().leaveEvent(e)
+
+
+class SlotCard(QWidget):
+    """Karta slotu (preset/kadr): miniatura wypelnia karte, na dole pasek z nazwa.
+
+    Rysowana wlasnorecznie - QToolButton nie potrafi polozyc tekstu na miniaturze,
+    przez co siatki wygladaly pusto."""
+
+    clicked = Signal(int)
+
+    def __init__(self, num: int, name: str = "", thumb: QPixmap | None = None,
+                 empty_word: str = "wolny", tooltip: str = ""):
+        super().__init__()
+        self.num = num
+        self.name = name or ""
+        self.thumb = thumb
+        self.empty_word = empty_word
+        self.selected = False
+        self.hover = False
+        self.setMinimumSize(96, 88)
+        from PySide6.QtWidgets import QSizePolicy
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setCursor(Qt.PointingHandCursor)
+        if tooltip:
+            self.setToolTip(tooltip)
+
+    def set_selected(self, on: bool):
+        on = bool(on)
+        if on != self.selected:
+            self.selected = on
+            self.update()
+
+    def enterEvent(self, e):
+        self.hover = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self.hover = False
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.clicked.emit(self.num)
+
+    def paintEvent(self, e):
+        from PySide6.QtCore import QRectF as _RF
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = _RF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
+        path = QPainterPath()
+        path.addRoundedRect(r, 8, 8)
+        p.fillPath(path, QColor("#1a1d21"))
+
+        bar_h = 26.0
+        img_r = _RF(r.x(), r.y(), r.width(), r.height() - bar_h)
+
+        if self.thumb is not None and not self.thumb.isNull():
+            p.save()
+            p.setClipPath(path)
+            pm = self.thumb
+            w, h = img_r.width(), img_r.height()
+            sw, sh = max(1, pm.width()), max(1, pm.height())
+            k = max(w / sw, h / sh)
+            dw, dh = sw * k, sh * k
+            dx = img_r.x() + (w - dw) / 2
+            dy = img_r.y() + (h - dh) / 2
+            p.drawPixmap(_RF(dx, dy, dw, dh), pm, _RF(0, 0, sw, sh))
+            g = QLinearGradient(0, r.bottom() - 64, 0, r.bottom())
+            g.setColorAt(0.0, QColor(0, 0, 0, 0))
+            g.setColorAt(1.0, QColor(0, 0, 0, 210))
+            p.fillRect(_RF(r.x(), r.bottom() - 64, r.width(), 64), g)
+            p.restore()
+        else:
+            f = p.font()
+            f.setPointSize(20)
+            f.setBold(True)
+            p.setFont(f)
+            p.setPen(QColor("#3d434b"))
+            p.drawText(img_r, Qt.AlignCenter, str(self.num))
+
+        # pasek z numerem i nazwa
+        p.save()
+        p.setClipPath(path)
+        p.fillRect(_RF(r.x(), r.bottom() - bar_h, r.width(), bar_h),
+                   QColor(9, 10, 12, 235))
+        p.restore()
+        p.setPen(QColor("#ffb14e") if self.selected else
+                 (QColor("#e8eaed") if self.name else QColor("#6f757c")))
+        f = p.font()
+        f.setPointSize(10)
+        f.setBold(True)
+        p.setFont(f)
+        txt = f"{self.num} · {self.name}" if self.name else f"{self.num} · {self.empty_word}"
+        p.drawText(_RF(r.x() + 10, r.bottom() - bar_h, r.width() - 20, bar_h),
+                   Qt.AlignVCenter | Qt.AlignLeft, txt)
+
+        # ramka
+        if self.selected:
+            pen = QPen(QColor("#ff9e2c"), 2)
+        elif self.hover:
+            pen = QPen(QColor("#565c64"), 1.5)
+        else:
+            pen = QPen(QColor("#2b2f35"), 1)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(r, 8, 8)
+        p.end()
 
 
 class ThumbLoader(QThread):
@@ -151,6 +258,7 @@ class PresetPanel(QWidget):
         self.sp_speed = QSpinBox()
         self.sp_speed.setRange(1, 25)
         self.sp_speed.setValue(10)
+        self.sp_speed.setMaximumWidth(84)
         top.addWidget(self.sp_speed)
         self.btn_clear = QPushButton("Wyczysc slot")
         self.btn_clear.clicked.connect(self.clear_slot)
@@ -168,6 +276,7 @@ class PresetPanel(QWidget):
         self.btn_prev.clicked.connect(lambda: self.set_page(self.page - 1))
         nav.addWidget(self.btn_prev)
         self.lb_page = QLabel()
+        self.lb_page.setStyleSheet("color: #9aa0a6;")
         nav.addWidget(self.lb_page, 1)
         self.btn_next = QPushButton("241-256 ▶")
         self.btn_next.clicked.connect(lambda: self.set_page(self.page + 1))
@@ -192,38 +301,33 @@ class PresetPanel(QWidget):
         while self.grid.count():
             w = self.grid.takeAt(0).widget()
             if w:
+                w.hide()
+                w.setParent(None)
                 w.deleteLater()
         base = self.page * 16
         action = "przywolanie" if self.mode == "recall" else "ZAPIS (nadpisze slot!)"
-        self.lb_page.setText(f"Sloty {base + 1}-{base + 16} (klik = {action})")
+        self.lb_page.setText(f"Sloty {base + 1}-{base + 16} · klik = {action}")
         self.btn_prev.setText(f"◀ {max(1, base - 15)}-{base}" if base else "◀")
         self.btn_next.setText(f"{base + 17}-{base + 32} ▶" if base < 240 else "▶")
         for i in range(16):
             num = base + i + 1
             name = self.names.get(num, "")
-            from PySide6.QtWidgets import QSizePolicy, QToolButton
-            b = QToolButton()
-            b.setText(f"{num} · {name}" if name else str(num))
-            b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-            b.setMinimumSize(96, 110)
-            f = b.font()
-            f.setPointSize(11)
-            b.setFont(f)
-            b.setFocusPolicy(Qt.NoFocus)
-            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            b.clicked.connect(lambda _, n=num: self.activate(n))
-            pm = self.thumbs.get(num)
-            if pm is not None:
-                # miniaturki kamery zawsze 16:9 - skaluj z zachowaniem proporcji
-                iso = pm.scaled(208, 117, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                b.setIcon(iso)
-                b.setIconSize(iso.size())
-            self.grid.addWidget(b, i // 4, i % 4)
+            tip = f"Preset {num}" + (f": {name}" if name else " (wolny)")
+            card = SlotCard(num, name, self.thumbs.get(num), "wolny", tip)
+            card.set_selected(num == self.slot)
+            card.clicked.connect(self.activate)
+            self.grid.addWidget(card, i // 4, i % 4)
         for i in range(4):
             self.grid.setRowStretch(i, 1)
             self.grid.setColumnStretch(i, 1)
         self.load_thumbs([n for n in (base + i + 1 for i in range(16))
                           if n in self.names and n not in self.thumbs])
+
+    def _apply_selection(self):
+        for i in range(self.grid.count()):
+            w = self.grid.itemAt(i).widget()
+            if isinstance(w, SlotCard):
+                w.set_selected(w.num == self.slot)
 
     def load_thumbs(self, nums):
         if not nums:
@@ -295,6 +399,7 @@ class PresetPanel(QWidget):
 
     def activate(self, num):
         self.slot = num
+        self._apply_selection()
         if self.mode == "recall":
             ok, msg = self.api.preset_recall(num, self.sp_speed.value())
             self.log(f"[{self.api.ip}] Preset {num} przywolaj: {'OK' if ok else 'BLAD ' + msg[:100]}")
@@ -354,7 +459,7 @@ class PadButton(QPushButton):
         self._held = False
         self.setMinimumSize(68, 56)
         f = self.font()
-        f.setPointSize(18)
+        f.setPointSize(22)
         f.setBold(True)
         self.setFont(f)
         self.setFocusPolicy(Qt.NoFocus)
@@ -438,38 +543,36 @@ class FramePanel(QWidget):
         self.reload()
 
     def reload(self):
-        from PySide6.QtWidgets import QSizePolicy, QToolButton
+        from PySide6.QtWidgets import QSizePolicy, QToolButton  # noqa: F401
         while self.grid.count():
             w = self.grid.takeAt(0).widget()
             if w:
+                w.hide()
+                w.setParent(None)
                 w.deleteLater()
         for i in range(16):
             fr = self.frames[i]
-            b = QToolButton()
-            b.setText(f"{i + 1} · {fr['name']}" if fr else str(i + 1))
-            b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-            b.setMinimumSize(96, 110)
-            f = b.font()
-            f.setPointSize(11)
-            b.setFont(f)
-            b.setFocusPolicy(Qt.NoFocus)
-            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            if fr:
-                b.setToolTip(f"PTZ {','.join(fr['ptzf'])} - klik: {self.mode}")
-            pm = self.thumbs.get(i)
-            if pm is not None:
-                iso = pm.scaled(208, 117, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                b.setIcon(iso)
-                b.setIconSize(iso.size())
-            b.clicked.connect(lambda _, n=i: self.activate(n))
-            self.grid.addWidget(b, i // 4, i % 4)
+            name = fr["name"] if fr else ""
+            tip = (f"PTZ {','.join(fr['ptzf'])} · klik = {self.mode}") if fr else \
+                f"Kadr {i + 1} pusty"
+            card = SlotCard(i + 1, name, self.thumbs.get(i), "pusty", tip)
+            card.set_selected(i == self.slot)
+            card.clicked.connect(lambda n: self.activate(n - 1))
+            self.grid.addWidget(card, i // 4, i % 4)
         for i in range(4):
             self.grid.setRowStretch(i, 1)
             self.grid.setColumnStretch(i, 1)
         self.load_thumbs()
 
+    def _apply_selection(self):
+        for i in range(self.grid.count()):
+            w = self.grid.itemAt(i).widget()
+            if isinstance(w, SlotCard):
+                w.set_selected((w.num - 1) == self.slot)
+
     def activate(self, i: int):
         self.slot = i
+        self._apply_selection()
         if self.mode == "recall":
             fr = self.frames[i]
             if not fr:
@@ -553,16 +656,20 @@ class CameraTab(QWidget):
         self.pages.addTab(self.preset_panel, "Presety")
         self.frame_panel = FramePanel(self.api, self.log_line, self.frames, self.on_frames_changed)
         self.pages.addTab(self.frame_panel, "Kadry PTZ")
-        # dolny pasek: status + szybkie presety 1-8 (wypelnia szeroki ekran)
+        # dolny pasek: status + szybkie kadry 1-6
         bottom = QHBoxLayout()
-        bottom.setContentsMargins(0, 4, 0, 0)
+        bottom.setContentsMargins(0, 6, 0, 0)
+        bottom.setSpacing(6)
         outer.addLayout(bottom)
         bottom.addWidget(self.status, 1)
-        bottom.addWidget(QLabel("Kadry:"))
+        bottom.addSpacing(10)
+        lb_k = QLabel("KADRY:")
+        lb_k.setProperty("sec", "1")
+        bottom.addWidget(lb_k)
         self.quick_btns: list[QPushButton] = []
         for n in range(1, 7):
             b = QPushButton(str(n))
-            b.setMinimumSize(64, 40)
+            b.setMinimumSize(86, 38)
             b.setFocusPolicy(Qt.NoFocus)
             b.clicked.connect(lambda _, nn=n: self.quick_frame(nn))
             bottom.addWidget(b)
@@ -582,7 +689,7 @@ class CameraTab(QWidget):
 
     # ---------- budowa ----------
     def _build(self, base: QWidget):
-        from PySide6.QtWidgets import QButtonGroup, QGroupBox, QRadioButton
+        from PySide6.QtWidgets import QButtonGroup, QGroupBox, QRadioButton, QSizePolicy
         root = QHBoxLayout(base)
         root.setSpacing(12)
 
@@ -593,19 +700,21 @@ class CameraTab(QWidget):
         left = QVBoxLayout(gb_ptz)
         pad = QGridLayout()
         pad.setSpacing(6)
-        left.addLayout(pad)
+        left.addLayout(pad, 1)
         for direction, label, r, c in DIRS:
             if direction == "home":
                 b = QPushButton("HOME")
                 f = b.font()
-                f.setPointSize(11)
+                f.setPointSize(13)
                 f.setBold(True)
                 b.setFont(f)
                 b.setMinimumSize(68, 56)
                 b.setFocusPolicy(Qt.NoFocus)
+                b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 b.clicked.connect(lambda: self.run(self.api.home(), "Home"))
             else:
                 b = PadButton(label, lambda hold, d=direction: self.pad_action(d, hold))
+                b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             pad.addWidget(b, r, c)
         mode_row = QHBoxLayout()
         left.addLayout(mode_row)
@@ -697,8 +806,10 @@ class CameraTab(QWidget):
         fr2.addWidget(QLabel("Tryb focus:"))
         self.cb_focus = QComboBox()
         self.cb_focus.addItems(["auto", "manual"])
+        self.cb_focus.setMinimumWidth(110)
         fr2.addWidget(self.cb_focus, 1)
         self.btn_focus = QPushButton("Ustaw")
+        self.btn_focus.setMaximumWidth(90)
         self.btn_focus.clicked.connect(lambda: self.run(
             self.api.set_imaging(FocusMode=self.cb_focus.currentText()), "FocusMode"))
         fr2.addWidget(self.btn_focus)
@@ -708,7 +819,7 @@ class CameraTab(QWidget):
         gb_img = QGroupBox("Obraz")
         root.addWidget(gb_img, 1)
         right = QVBoxLayout(gb_img)
-        right.addWidget(QLabel("<b>Ekspozycja</b>"))
+        right.addWidget(self._sec_label("Ekspozycja"))
         form = QFormLayout()
         form.setSpacing(4)
         right.addLayout(form)
@@ -720,11 +831,13 @@ class CameraTab(QWidget):
         self.sl_shut = self._slider(form, "Shutter:", 6, 33, lambda v: SHUTTER_50P.get(v, "?"))
         self.sl_comp = self._slider(form, "Komp. (+/-):", 0, 14, expcomp_db)
         self.btn_exp = QPushButton("Zastosuj ekspozycje")
+        self.btn_exp.setProperty("kind", "primary")
         self.btn_exp.setMinimumHeight(36)
         self.btn_exp.clicked.connect(self.apply_exposure)
+        right.addSpacing(4)
         right.addWidget(self.btn_exp)
-        right.addSpacing(6)
-        right.addWidget(QLabel("<b>Balans bieli</b>"))
+        right.addSpacing(10)
+        right.addWidget(self._sec_label("Balans bieli"))
         form2 = QFormLayout()
         form2.setSpacing(4)
         right.addLayout(form2)
@@ -737,6 +850,7 @@ class CameraTab(QWidget):
         wbrow = QHBoxLayout()
         right.addLayout(wbrow)
         self.btn_wb = QPushButton("Zastosuj WB")
+        self.btn_wb.setProperty("kind", "primary")
         self.btn_wb.setMinimumHeight(36)
         self.btn_wb.clicked.connect(self.apply_wb)
         wbrow.addWidget(self.btn_wb)
@@ -748,6 +862,11 @@ class CameraTab(QWidget):
         self.btn_reload.clicked.connect(self.refresh_all)
         right.addWidget(self.btn_reload)
         right.addStretch(1)
+
+    def _sec_label(self, text: str) -> QLabel:
+        lb = QLabel(text.upper())
+        lb.setProperty("sec", "1")
+        return lb
 
     def _slider(self, form, label, lo, hi, fmt=None):
         row = QHBoxLayout()
@@ -892,9 +1011,7 @@ class CameraTab(QWidget):
         for b, n in zip(self.quick_btns, range(1, 7)):
             fr = self.frames[n - 1] if n - 1 < len(self.frames) else None
             nm_ = fr.get("name", "") if isinstance(fr, dict) else ""
-            b.setText(f"{n} {nm_}"[:16] if nm_ else str(n))
             b.setToolTip(f"Kadr {n}" + (f": {nm_}" if nm_ else " (pusty)"))
-            b.setStyleSheet("")
         self._mark_quick()
 
     def refresh_all(self):
@@ -973,6 +1090,8 @@ class CameraTab(QWidget):
         for b, n in zip(self.quick_btns, range(1, 7)):
             fr = self.frames[n - 1] if n - 1 < len(self.frames) else None
             nm_ = fr.get("name", "") if isinstance(fr, dict) else ""
-            mark = "▶ " if n - 1 == match else ""
-            b.setText(f"{mark}{n} {nm_}"[:16] if nm_ else f"{mark}{n}")
-            b.setStyleSheet("border: 2px solid #ff9e2c;" if n - 1 == match else "")
+            b.setText(f"{n} {nm_}"[:16] if nm_ else str(n))
+            on = (n - 1 == match)
+            b.setStyleSheet(
+                "QPushButton { border: 2px solid #ff9e2c; background: #3a2c14;"
+                " color: #ffb14e; font-weight: bold; }" if on else "")

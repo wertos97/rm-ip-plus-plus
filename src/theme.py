@@ -38,21 +38,41 @@ QSlider::handle:horizontal {{ width: 15px; height: 15px; background: {ACCENT};
 QSlider::groove:vertical {{ width: 3px; background: {LINE}; }}
 QSlider::handle:vertical {{ width: 15px; height: 15px; background: {ACCENT};
   border-radius: 7px; margin: 0 -6px; }}
-QCheckBox::indicator, QRadioButton::indicator {{ width: 15px; height: 15px; }}
-QCheckBox::indicator:checked, QRadioButton::indicator:checked {{ background: {ACCENT}; }}
+QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 4px;
+  border: 2px solid #4a4f56; background: {FIELD}; }}
+QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
+QRadioButton::indicator {{ width: 18px; height: 18px; border: none;
+  background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+    stop:0 rgba(0,0,0,0), stop:0.6 rgba(0,0,0,0), stop:0.66 #4a4f56,
+    stop:0.84 #4a4f56, stop:0.88 rgba(0,0,0,0), stop:1 rgba(0,0,0,0)); }}
+QRadioButton::indicator:checked {{ border: none;
+  background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+    stop:0 {ACCENT}, stop:0.42 {ACCENT}, stop:0.5 {BG}, stop:0.74 {BG},
+    stop:0.82 {ACCENT}, stop:0.9 {ACCENT}, stop:0.94 rgba(0,0,0,0),
+    stop:1 rgba(0,0,0,0)); }}
 QTabWidget::pane {{ border: 1px solid {LINE}; border-radius: 4px; }}
 QTabBar::tab {{ background: {PANEL}; border: 1px solid {LINE}; padding: 7px 16px;
   border-top-left-radius: 5px; border-top-right-radius: 5px; }}
 QTabBar::tab:selected {{ color: {ACCENT}; border-color: {ACCENT}; }}
 QTableWidget {{ background: {PANEL}; gridline-color: {LINE}; alternate-background-color: #101215; }}
-QTableWidget::item:selected {{ background-color: #3a2c14; color: white; }}
-QTableWidget::item:selected:!active {{ background-color: #2a2419; color: white; }}
+QTableWidget::item:selected {{ background-color: #41331b; color: #ffd9a0; }}
+QTableWidget::item:selected:!active {{ background-color: #2f2717; color: #ffd9a0; }}
 QHeaderView::section {{ background: {FIELD}; border: none; padding: 6px; font-weight: bold; }}
 QProgressBar {{ background: {FIELD}; border: 1px solid {LINE}; border-radius: 4px;
   text-align: center; }}
 QProgressBar::chunk {{ background: {ACCENT}; }}
-QPlainTextEdit {{ background: {PANEL}; border: 1px solid {LINE}; border-radius: 4px; }}
+QPlainTextEdit {{ background: {PANEL}; border: 1px solid {LINE}; border-radius: 4px;
+  font-family: Consolas, monospace; font-size: 10px; }}
 QLabel[val="1"] {{ color: #ff9e2c; font-weight: bold; }}
+QLabel[val="1"] {{ color: #ff9e2c; font-weight: bold; }}
+QLabel[sec="1"] {{ color: {DIM}; font-weight: bold; letter-spacing: 2px;
+  font-size: 11px; padding-top: 2px; }}
+QPushButton[kind="primary"] {{ background: #3a2c14; border: 1px solid {ACCENT};
+  color: #ffc06a; font-weight: bold; }}
+QPushButton[kind="primary"]:hover {{ background: #4a3618; border-color: #ffb14e; }}
+QPushButton[kind="primary"]:pressed {{ background: #2a2010; }}
+QWidget#adv {{ background: #101216; border: 1px solid {LINE}; border-radius: 6px; }}
+QSplitter::handle:hover {{ background: {ACCENT_DIM}; }}
 QMenu {{ background: {FIELD}; border: 1px solid {LINE}; }}
 QMenu::item:selected {{ background: #3a2c14; }}
 QToolTip {{ background: #22252a; color: {TEXT}; border: 1px solid {LINE}; }}

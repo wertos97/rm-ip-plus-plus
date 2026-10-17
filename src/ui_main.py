@@ -10,6 +10,7 @@ import atexit
 import datetime
 
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
@@ -92,7 +93,7 @@ class ScanWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("RM IP++ - wykrywanie kamer Sony")
+        self.setWindowTitle("RM IP++ — konsola kamer Sony")
         self.resize(1360, 820)
         self.config = cfg.load()
         self.user = self.config.get("user", DEFAULT_USER)
@@ -134,8 +135,10 @@ class MainWindow(QMainWindow):
 
         # pasek zaawansowany (domyslnie schowany)
         self.adv = QWidget()
+        self.adv.setObjectName("adv")
         adv_lay = QVBoxLayout(self.adv)
-        adv_lay.setContentsMargins(0, 0, 0, 0)
+        adv_lay.setContentsMargins(12, 10, 12, 10)
+        adv_lay.setSpacing(8)
         v.addWidget(self.adv)
         ar1 = QHBoxLayout()
         adv_lay.addLayout(ar1)
@@ -191,12 +194,14 @@ class MainWindow(QMainWindow):
         hh = self.cam_table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(1, QHeaderView.Stretch)
-        for i in (2, 3, 4):
-            hh.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+        for i, wdt in ((2, 66), (3, 66), (4, 96)):
+            hh.setSectionResizeMode(i, QHeaderView.Fixed)
+            self.cam_table.setColumnWidth(i, wdt)
         self.cam_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.cam_table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.cam_table.setAlternatingRowColors(True)
-        self.cam_table.verticalHeader().setDefaultSectionSize(30)
+        self.cam_table.verticalHeader().setDefaultSectionSize(34)
+        self.cam_table.verticalHeader().setFixedWidth(28)
         f = self.cam_table.font()
         f.setPointSize(11)
         self.cam_table.setFont(f)
@@ -272,8 +277,11 @@ class MainWindow(QMainWindow):
         self.btn_adv.setText("Zaawansowane ▾" if on else "Zaawansowane ▸")
 
     def log_line(self, t: str):
+        from html import escape
         ts = datetime.datetime.now().strftime("%H:%M:%S")
-        self.log.appendPlainText(f"[{ts}] {t}")
+        self.log.appendHtml(
+            f'<span style="color:#6f757c">[{ts}]</span> '
+            f'<span style="color:#d8dade">{escape(str(t))}</span>')
 
     def update_net_label(self):
         try:
@@ -372,18 +380,23 @@ class MainWindow(QMainWindow):
         self.cams = sorted(found, key=lambda d: d["ip"])
         self.cam_table.setRowCount(len(self.cams))
         for r, c in enumerate(self.cams):
-            ip_item = QTableWidgetItem(("● " if c.get("http") else "○ ") + c["ip"])
-            if c.get("http"):
-                ip_item.setForeground(Qt.darkGreen)
+            up = bool(c.get("http"))
+            ip_item = QTableWidgetItem(("● " if up else "○ ") + c["ip"])
+            ip_item.setForeground(QColor("#8fce8f") if up else QColor("#8a8f96"))
+            ip_item.setToolTip(c["ip"])
             self.cam_table.setItem(r, 0, ip_item)
             self.cam_table.setItem(r, 1, QTableWidgetItem(str(c.get("model", "?"))))
-            self.cam_table.setItem(r, 2, QTableWidgetItem("tak" if c.get("http") else "nie"))
-            self.cam_table.setItem(r, 3, QTableWidgetItem("tak" if c.get("visca_52381") else "nie"))
+            for col, ok in ((2, c.get("http")), (3, c.get("visca_52381"))):
+                it = QTableWidgetItem("tak" if ok else "nie")
+                it.setTextAlignment(Qt.AlignCenter)
+                it.setForeground(QColor("#8fce8f") if ok else QColor("#8a8f96"))
+                self.cam_table.setItem(r, col, it)
             self.cam_table.setItem(r, 4, QTableWidgetItem(""))
         self.refresh_panel_col()
+        self._refresh_tab_labels()
         self.dev_title.setText(f"Urzadzenia ({len(self.cams)})")
-        self.lbl.setText(f"Znaleziono {len(found)}. Dwuklik otwiera sterowanie.")
-        self.lbl.setText(f"Znaleziono {len(found)}. Dwuklik otwiera sterowanie.")
+        n = len(found)
+        self.lbl.setText(f"Wykryto: {n} · dwuklik = sterowanie")
         self.log_line(f"Skan koniec: {[c['ip'] for c in found]}")
         if not getattr(self, "_restored", False):
             self._restored = True
@@ -408,9 +421,10 @@ class MainWindow(QMainWindow):
     def refresh_panel_col(self):
         open_ips = set(self.ctrl_ips())
         for r, c in enumerate(self.cams):
-            item = QTableWidgetItem("otwarty" if c["ip"] in open_ips else "—")
-            if c["ip"] in open_ips:
-                item.setForeground(Qt.darkGreen)
+            opened = c["ip"] in open_ips
+            item = QTableWidgetItem("otwarty" if opened else "—")
+            item.setTextAlignment(Qt.AlignCenter)
+            item.setForeground(QColor("#ffb14e") if opened else QColor("#6f757c"))
             self.cam_table.setItem(r, 4, item)
 
     def dev_menu(self, pos):
@@ -481,7 +495,21 @@ class MainWindow(QMainWindow):
         self.add_ctrl_tab()
 
     def ctrl_ips(self):
-        return [self.ctrl_tabs.tabText(i) for i in range(self.ctrl_tabs.count())]
+        out = []
+        for i in range(self.ctrl_tabs.count()):
+            wdg = self.ctrl_tabs.widget(i)
+            out.append((wdg.property("ip") if wdg is not None else None)
+                       or self.ctrl_tabs.tabText(i))
+        return out
+
+    def _tab_label(self, ip: str) -> str:
+        return next((str(c.get("model") or "") for c in self.cams if c["ip"] == ip), "") or ip
+
+    def _refresh_tab_labels(self):
+        for i in range(self.ctrl_tabs.count()):
+            wdg = self.ctrl_tabs.widget(i)
+            ip = (wdg.property("ip") if wdg is not None else None) or self.ctrl_tabs.tabText(i)
+            self.ctrl_tabs.setTabText(i, self._tab_label(ip))
 
     def add_ctrl_tab(self, ip=None):
         try:
@@ -500,7 +528,9 @@ class MainWindow(QMainWindow):
                         self.e_pass.text(), http_port=port, log=self.log_line,
                         frames=self.config.get("frames", {}).get(ip),
                         save_frames=lambda: self.save_frames(ip))
-        self.ctrl_tabs.addTab(tab, ip)
+        tab.setProperty("ip", ip)
+        idx = self.ctrl_tabs.addTab(tab, self._tab_label(ip))
+        self.ctrl_tabs.setTabToolTip(idx, f"{ip} · sterowanie CGI")
         self.ctrl_tabs.setCurrentWidget(tab)
         self.log_line(f"Dodano sterowanie {ip}.")
         self.refresh_panel_col()
@@ -537,13 +567,17 @@ class MainWindow(QMainWindow):
         except ImportError:
             from ui_control import CameraTab  # noqa: E402
         for ip in self.config.get("open_tabs", []):
+            if ip in self.ctrl_ips():
+                continue  # juz otwarta (np. dodana recznie tuz po skanie)
             try:
                 port = next((c.get("http_port", 80) for c in self.cams if c["ip"] == ip), 80)
                 tab = CameraTab(ip, self.e_user.text().strip() or DEFAULT_USER,
                                 self.e_pass.text(), http_port=port, log=self.log_line,
                                 frames=self.config.get("frames", {}).get(ip),
                                 save_frames=lambda ip=ip: self.save_frames(ip))
-                self.ctrl_tabs.addTab(tab, ip)
+                tab.setProperty("ip", ip)
+                idx = self.ctrl_tabs.addTab(tab, self._tab_label(ip))
+                self.ctrl_tabs.setTabToolTip(idx, f"{ip} · sterowanie CGI")
             except Exception as e:
                 self.log_line(f"Nie przywrocono {ip}: {e}"[:150])
         self.refresh_panel_col()
@@ -588,5 +622,5 @@ def run():
     app = QApplication(sys.argv)
     apply_theme(app)
     w = MainWindow()
-    w.show()
+    w.showMaximized()
     sys.exit(app.exec())
