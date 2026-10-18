@@ -53,11 +53,11 @@ w = QWidget()
 w.setWindowTitle(f"SONY style {VAR}")
 w.resize(520, 640)
 v = QVBoxLayout(w)
-v.addWidget(QLabel("SONY  •  SRG-X400  •  OBRAZ"))
-for sec, rows in [("EKSPOZYCJA", [("Tryb", "manual"), ("Iris", "20  F3.1"),
+v.addWidget(QLabel("SONY  •  SRG-X400  •  IMAGE"))
+for sec, rows in [("EXPOSURE", [("Tryb", "manual"), ("Iris", "20  F3.1"),
                                   ("Gain", "2  +3dB"), ("Shutter", "17  1/30"),
                                   ("Komp.", "7  ±0dB")]),
-                   ("BALANS BIELI", [("Tryb", "auto"), ("B gain", "158"),
+                   ("WHITE BALANCE", [("Tryb", "auto"), ("B gain", "158"),
                                      ("R gain", "206"), ("Offset", "7")])]:
     g = QGroupBox(sec)
     f = QFormLayout(g)

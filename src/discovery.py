@@ -62,8 +62,8 @@ def merge_udp(found: list[dict], udp_hits: list[dict]) -> list[dict]:
                "model": label or "?", "udp": u}
         mac = u.get("mac") or ""
         cam["note"] = (f"UDP 52380: MAC {mac} - brak potwierdzenia HTTP "
-                       "(sprawdz podsiec/trase)") if mac else \
-                      "UDP 52380 - brak potwierdzenia HTTP (sprawdz podsiec/trase)"
+                       "(check subnet/route)") if mac else \
+                      "UDP 52380 - no HTTP confirmation (check subnet/route)"
         out.append(cam)
         by_ip[ip] = cam
     return sorted(out, key=lambda d: d["ip"])
@@ -108,21 +108,21 @@ def probe_ip(ip: str, user: str = "admin", password: str = "admin",
                 hdrs = " ".join(f"{k} {v}" for k, v in r.headers.items())
                 if re.search(r"sony|srg|snc|ipela|camera|kamera|ptz|visca",
                              f"{title} {hdrs}", re.I):
-                    ident = title or "kamera (HTTP)"
+                    ident = title or "camera (HTTP)"
             except Exception:
                 pass
             if ident:
                 info["model"] = ident
             elif visca:
                 # brak potwierdzenia po HTTP, ale otwarty port VISCA = prawie na pewno kamera
-                info["model"] = "kamera (VISCA 52381)"
-                info["note"] = "HTTP nie potwierdzil modelu - sprawdz port HTTP w kamerze"
+                info["model"] = "camera (VISCA 52381)"
+                info["note"] = "HTTP did not confirm the model - check the camera HTTP port"
             else:
                 return None  # to nie kamera - nie zasmiecaj listy urzadzen
             if isinstance(net, str) and net and not info.get("note"):
                 info["note"] = str(net)[:150]
     elif visca:
-        info["note"] = "VISCA:52381 otwarty, HTTP zamkniete (sprawdz port HTTP w kamerze)"
+        info["note"] = "VISCA:52381 open, HTTP closed (check the camera HTTP port)"
     return info
 
 

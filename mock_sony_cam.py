@@ -44,7 +44,7 @@ class H(BaseHTTPRequestHandler):
                 if k in q:
                     STATE[k] = q[k][0]
             return self._send("OK:network.cgi set\n")
-        return self._send("<html><body><h1>MOCK SRG-X400</h1><p>Fake web UI - test kart.</p></body></html>")
+        return self._send("<html><body><h1>MOCK SRG-X400</h1><p>Fake web UI - for testing tabs.</p></body></html>")
 
 
 def visca_loop():
@@ -70,5 +70,5 @@ def main():
 
 
 if __name__ == "__main__":
-    print("Mock na 127.0.0.1:8080 (HTTP) + 127.0.0.1:52381 (VISCA). Ctrl+C stop.")
+    print("Mock on 127.0.0.1:8080 (HTTP) + 127.0.0.1:52381 (VISCA). Ctrl+C to stop.")
     main()

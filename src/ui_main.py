@@ -128,7 +128,7 @@ kamera nadaje po SDI/HDMI do miksera. Do kamery wysyła komendy HTTP CGI (Digest
 class AboutDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("O aplikacji")
+        self.setWindowTitle("About")
         self.resize(780, 640)
         v = QVBoxLayout(self)
         v.setContentsMargins(12, 12, 12, 12)
@@ -139,7 +139,7 @@ class AboutDialog(QDialog):
         v.addWidget(tb, 1)
         row = QHBoxLayout()
         row.addStretch(1)
-        b = QPushButton("Zamknij")
+        b = QPushButton("Close")
         b.setMinimumWidth(130)
         b.clicked.connect(self.accept)
         row.addWidget(b)
@@ -167,7 +167,7 @@ class ScanWorker(QThread):
         if self.mode == "fast":
             # faza 1/4: kandydaci z ARP (szybkie trafienia najpierw)
             try:
-                self.step.emit("Skan: tabela ARP...")
+                self.step.emit("Scan: ARP table...")
                 self.prog.emit(3, 100)
                 arp = [h["ip"] for h in bridge.arp_candidates(None)]
             except Exception:
@@ -177,7 +177,7 @@ class ScanWorker(QThread):
                 return
             # faza 2/4: SSDP (multicast, ~2 s)
             try:
-                self.step.emit("Skan: nasluch SSDP/UPnP...")
+                self.step.emit("Scan: SSDP/UPnP listening...")
                 self.prog.emit(8, 100)
                 ssdp = [h["ip"] for h in bridge.ssdp_search(timeout=2.0)]
             except Exception:
@@ -189,16 +189,16 @@ class ScanWorker(QThread):
             targets = list(dict.fromkeys(
                 list(self.known) + arp + ssdp + list(disc.LIKELY_DEFAULTS)))
             # faza 3/4: sondowanie TCP + rownolegle UDP ENQ:network (52380)
-            self.step.emit(f"Skan: sondowanie ({len(targets)} adresow)...")
+            self.step.emit(f"Scan: probing ({len(targets)} addresses)...")
             with ThreadPoolExecutor(max_workers=1) as uex:
                 fut_udp = self._start_udp(uex)
                 out = disc.probe_many(
                     targets, self.user, self.password,
                     progress=lambda d, t: (self.prog.emit(12 + 88 * d // max(1, t), 100),
-                                           self.step.emit(f"Skan: {d}/{t}...")))
+                                           self.step.emit(f"Scan: {d}/{t}...")))
                 out = disc.merge_udp(out, self._udp_result(fut_udp))
         else:
-            self.step.emit("Skan: UDP 52380...")
+            self.step.emit("Scan: UDP 52380...")
             with ThreadPoolExecutor(max_workers=1) as uex:
                 fut_udp = self._start_udp(uex)
                 out = disc.scan_subnet(self.cidr, self.user, self.password,
@@ -217,7 +217,7 @@ class ScanWorker(QThread):
             extra = []
         try:
             return ex.submit(disc.udp_discover, 2.0, extra,
-                             lambda s: self.step.emit("Skan: " + str(s)))
+                             lambda s: self.step.emit("Scan: " + str(s)))
         except Exception:
             return None
 
@@ -251,7 +251,7 @@ class MainWindow(QMainWindow):
         top = QHBoxLayout()
         top.setSpacing(8)
         v.addLayout(top)
-        self.btn_fast = QPushButton("Skanuj")
+        self.btn_fast = QPushButton("Scan")
         self.btn_fast.setMinimumHeight(32)
         self.btn_fast.clicked.connect(lambda: self.start_scan("fast"))
         top.addWidget(self.btn_fast)
@@ -260,7 +260,7 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(False)
         self.btn_stop.setVisible(False)
         top.addWidget(self.btn_stop)
-        self.lbl = QLabel("Skanowanie startowe...")
+        self.lbl = QLabel("Starting scan...")
         self.lbl.setStyleSheet("color: #9aa0a6;")
         self.lbl.setWordWrap(True)
         top.addWidget(self.lbl, 1)
@@ -271,7 +271,7 @@ class MainWindow(QMainWindow):
         self.prog.setFormat("%p%")
         self.prog.setVisible(False)
         top.addWidget(self.prog)
-        self.btn_adv = QPushButton("Zaawansowane ▸")
+        self.btn_adv = QPushButton("Advanced ▸")
         self.btn_adv.setCheckable(True)
         self.btn_adv.setChecked(False)
         self.btn_adv.toggled.connect(self.toggle_adv)
@@ -286,14 +286,14 @@ class MainWindow(QMainWindow):
         v.addWidget(self.adv)
         ar1 = QHBoxLayout()
         adv_lay.addLayout(ar1)
-        ar1.addWidget(QLabel("Podsiec (CIDR):"))
+        ar1.addWidget(QLabel("Subnet (CIDR):"))
         self.e_cidr = QLineEdit(self.config.get("scan_cidr", "192.168.0.0/24"))
         self.e_cidr.setMaximumWidth(150)
         ar1.addWidget(self.e_cidr)
-        self.btn_full = QPushButton("Skanuj podsiec")
+        self.btn_full = QPushButton("Scan subnet")
         self.btn_full.clicked.connect(lambda: self.start_scan("full"))
         ar1.addWidget(self.btn_full)
-        self.btn_bridge = QPushButton("Dobuduj most do nieosiagalnych")
+        self.btn_bridge = QPushButton("Bridge unreachable")
         self.btn_bridge.clicked.connect(self.on_bridge)
         ar1.addWidget(self.btn_bridge)
         ar1.addStretch(1)
@@ -303,12 +303,12 @@ class MainWindow(QMainWindow):
         self.e_user = QLineEdit(self.user)
         self.e_user.setMaximumWidth(110)
         ar2.addWidget(self.e_user)
-        ar2.addWidget(QLabel("Haslo:"))
+        ar2.addWidget(QLabel("Password:"))
         self.e_pass = QLineEdit(self.password)
         self.e_pass.setEchoMode(QLineEdit.Password)
         self.e_pass.setMaximumWidth(130)
         ar2.addWidget(self.e_pass)
-        self.btn_diag = QPushButton("Sprawdz polaczenie")
+        self.btn_diag = QPushButton("Check connection")
         self.btn_diag.clicked.connect(self.on_diag)
         ar2.addWidget(self.btn_diag)
         self.net_lbl = QLabel()
@@ -327,7 +327,7 @@ class MainWindow(QMainWindow):
         lv.setSpacing(8)
         devrow = QHBoxLayout()
         lv.addLayout(devrow)
-        self.dev_title = QLabel("Urzadzenia")
+        self.dev_title = QLabel("Devices")
         f = self.dev_title.font()
         f.setPointSize(11)
         f.setBold(True)
@@ -358,15 +358,15 @@ class MainWindow(QMainWindow):
         self.cam_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.cam_table.customContextMenuRequested.connect(self.dev_menu)
         self.cam_table.doubleClicked.connect(self.open_web_tab)
-        self.cam_empty = _CenterHint("Brak urzadzen.", self.cam_table.viewport())
+        self.cam_empty = _CenterHint("No devices.", self.cam_table.viewport())
         lv.addWidget(self.cam_table, 1)
         devbtn = QHBoxLayout()
         devbtn.setSpacing(8)
         lv.addLayout(devbtn)
-        self.btn_addip = QPushButton("Dodaj IP...")
+        self.btn_addip = QPushButton("Add IP...")
         self.btn_addip.clicked.connect(self.add_manual_ip)
         devbtn.addWidget(self.btn_addip)
-        self.btn_all = QPushButton("Steruj wszystkimi")
+        self.btn_all = QPushButton("Control all")
         self.btn_all.clicked.connect(self.open_all_tabs)
         devbtn.addWidget(self.btn_all)
         devbtn2 = QHBoxLayout()
@@ -381,7 +381,7 @@ class MainWindow(QMainWindow):
         self.btn_csv = QPushButton("CSV…")
         self.btn_csv.clicked.connect(self.csv_menu)
         devbtn2.addWidget(self.btn_csv)
-        self.btn_about = QPushButton("O aplikacji")
+        self.btn_about = QPushButton("About")
         self.btn_about.clicked.connect(self.show_about)
         devbtn2.addWidget(self.btn_about)
         split.addWidget(left)
@@ -397,10 +397,10 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         row.setSpacing(8)
         rv.addLayout(row)
-        self.btn_add = QPushButton("Steruj zaznaczona")
+        self.btn_add = QPushButton("Control selected")
         self.btn_add.clicked.connect(self.add_ctrl_tab)
         row.addWidget(self.btn_add)
-        self.btn_web = QPushButton("Otworz w Edge")
+        self.btn_web = QPushButton("Open in Edge")
         self.btn_web.clicked.connect(self.open_external)
         row.addWidget(self.btn_web)
         self.log = QPlainTextEdit()
@@ -436,18 +436,18 @@ class MainWindow(QMainWindow):
                     reach = dict(zip(known, ex.map(nm.tcp_reachable, known)))
                 need = [ip for ip in known if not reach.get(ip)]
                 if need:
-                    self.log_line(f"Start: odtwarzam most dla {need} na '{iface}'...")
+                    self.log_line(f"Start: restoring the bridge for {need} on '{iface}'...")
                     try:
                         ok, msg = nm.ensure_homes_visible(iface, need)
                     except Exception as e:
                         ok, msg = False, str(e)[:200]
-                    self.log_line("Most startowy: " + msg)
+                    self.log_line("Startup bridge: " + msg)
                     self.update_net_label()
         self.start_scan("fast")
 
     def toggle_adv(self, on: bool):
         self.adv.setVisible(on)
-        self.btn_adv.setText("Zaawansowane ▾" if on else "Zaawansowane ▸")
+        self.btn_adv.setText("Advanced ▾" if on else "Advanced ▸")
 
     def log_line(self, t: str):
         from html import escape
@@ -458,10 +458,10 @@ class MainWindow(QMainWindow):
 
     def update_net_label(self):
         try:
-            bi = nm.best_bridge_iface() or "brak Ethernetu"
+            bi = nm.best_bridge_iface() or "no Ethernet"
             n = len(nm._load_state())
-            n_txt = str(n) if n else "brak"
-            self.net_lbl.setText(f"Most auto: {bi} | temp IP: {n_txt}")
+            n_txt = str(n) if n else "none"
+            self.net_lbl.setText(f"Auto bridge: {bi} | temp IP: {n_txt}")
         except Exception:
             pass
 
@@ -469,10 +469,10 @@ class MainWindow(QMainWindow):
         orph = nm.find_orphans()
         if orph:
             txt = "\n".join(f"{o['interface_alias']} {o['ip']}/{o['prefix']}" for o in orph)
-            if QMessageBox.question(self, "Sieroty po poprzedniej sesji",
-                                    f"Znaleziono tymczasowe IP:\n{txt}\nUsunac?") == QMessageBox.Yes:
+            if QMessageBox.question(self, "Leftover IPs from the previous session",
+                                    f"Temporary IPs found:\n{txt}\nRemove?") == QMessageBox.Yes:
                 msgs = nm.cleanup_all()
-                self.log_line("Sprzatanie: " + " | ".join(msgs))
+                self.log_line("Cleanup: " + " | ".join(msgs))
                 self.update_net_label()
 
     def closeEvent(self, ev):
@@ -504,11 +504,11 @@ class MainWindow(QMainWindow):
             pass
         cands = list(dict.fromkeys(cands))
         if not cands:
-            QMessageBox.information(self, "Most", "Brak kandydatow (ARP/SSDP puste).")
+            QMessageBox.information(self, "Bridge", "No candidates (ARP/SSDP empty).")
             return
         for ip in cands:
             ok, msg = nm.ensure_reachable(ip)
-            self.log_line(f"Most {ip}: {msg}")
+            self.log_line(f"Bridge {ip}: {msg}")
         self.update_net_label()
         self.start_scan("fast")
 
@@ -525,7 +525,7 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
             if self.worker.isRunning():
-                self.log_line("Czekam na zakonczenie poprzedniego skanu...")
+                self.log_line("Waiting for the previous scan to finish...")
                 self.worker.stop()
                 self.worker.wait(8000)
         self.prog.setVisible(True)
@@ -534,8 +534,8 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(True)
         self.btn_stop.setVisible(True)
         self.btn_fast.setEnabled(False)
-        self.lbl.setText("Skanowanie...")
-        self.log_line(f"Skan {mode} (cidr={self.e_cidr.text()}).")
+        self.lbl.setText("Scanning...")
+        self.log_line(f"Scan {mode} (cidr={self.e_cidr.text()}).")
         self.worker = ScanWorker(mode, self.e_cidr.text().strip(), self.user, self.password,
                                  known=self.config.get("known_ips", []))
         self.worker.done.connect(lambda found, g=my_gen: self.on_scan_done(found, g))
@@ -546,7 +546,7 @@ class MainWindow(QMainWindow):
     def on_stop(self):
         if self.worker and self.worker.isRunning():
             self.worker.stop()
-            self.log_line("Przerwano skan.")
+            self.log_line("Scan stopped.")
 
     def on_scan_done(self, found, gen=None):
         if gen is not None and gen != getattr(self, "_scan_gen", gen):
@@ -577,19 +577,19 @@ class MainWindow(QMainWindow):
             self.cam_table.setItem(r, 0, ip_item)
             self.cam_table.setItem(r, 1, QTableWidgetItem(str(c.get("model", "?"))))
             for col, ok in ((2, c.get("http")), (3, c.get("visca_52381"))):
-                it = QTableWidgetItem("tak" if ok else "nie")
+                it = QTableWidgetItem("yes" if ok else "no")
                 it.setTextAlignment(Qt.AlignCenter)
                 it.setForeground(QColor("#8fce8f") if ok else QColor("#8a8f96"))
                 self.cam_table.setItem(r, col, it)
             self.cam_table.setItem(r, 4, QTableWidgetItem(""))
         self.refresh_panel_col()
         self._refresh_tab_labels()
-        self.dev_title.setText(f"Urzadzenia ({len(self.cams)})")
+        self.dev_title.setText(f"Devices ({len(self.cams)})")
         self.cam_empty.setVisible(not self.cams)
         self.cam_empty.raise_()
         n = len(found)
-        self.lbl.setText(f"Wykryto: {n}")
-        self.log_line(f"Skan koniec: {[c['ip'] for c in found]}")
+        self.lbl.setText(f"Found: {n}")
+        self.log_line(f"Scan done: {[c['ip'] for c in found]}")
         if not getattr(self, "_restored", False):
             self._restored = True
             self.restore_tabs()
@@ -614,7 +614,7 @@ class MainWindow(QMainWindow):
         open_ips = set(self.ctrl_ips())
         for r, c in enumerate(self.cams):
             opened = c["ip"] in open_ips
-            item = QTableWidgetItem("otwarty" if opened else "—")
+            item = QTableWidgetItem("open" if opened else "—")
             item.setTextAlignment(Qt.AlignCenter)
             item.setForeground(QColor("#ffb14e") if opened else QColor("#6f757c"))
             self.cam_table.setItem(r, 4, item)
@@ -622,10 +622,10 @@ class MainWindow(QMainWindow):
     def dev_menu(self, pos):
         from PySide6.QtWidgets import QMenu
         menu = QMenu(self)
-        a1 = menu.addAction("Steruj")
-        a2 = menu.addAction("Otworz w Edge")
-        a3 = menu.addAction("Sprawdz polaczenie")
-        a4 = menu.addAction("Zapomnij IP")
+        a1 = menu.addAction("Control")
+        a2 = menu.addAction("Open in Edge")
+        a3 = menu.addAction("Check connection")
+        a4 = menu.addAction("Forget IP")
         act = menu.exec(self.cam_table.viewport().mapToGlobal(pos))
         if act == a1:
             self.add_ctrl_tab()
@@ -647,19 +647,19 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self.on_scan_done(self.cams)
-        self.log_line(f"Zapomniano: {sorted(ips)}")
+        self.log_line(f"Forgotten: {sorted(ips)}")
 
     def add_manual_ip(self):
         from PySide6.QtWidgets import QInputDialog
-        ip, ok = QInputDialog.getText(self, "Dodaj IP", "Adres kamery (np. 192.168.4.101):")
+        ip, ok = QInputDialog.getText(self, "Add IP", "Camera address (e.g. 192.168.4.101):")
         if not ok or not ip.strip():
             return
         ip = ip.strip()
         import re as _re
         if not _re.match(r"^\d{1,3}(\.\d{1,3}){3}(:\d+)?$", ip):
-            QMessageBox.warning(self, "Dodaj IP", "To nie wyglada na adres IPv4.")
+            QMessageBox.warning(self, "Add IP", "This does not look like an IPv4 address.")
             return
-        self.log_line(f"Sondowanie {ip}...")
+        self.log_line(f"Probing {ip}...")
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             hit = disc.probe_ip(ip, self.e_user.text().strip() or DEFAULT_USER, self.e_pass.text())
@@ -667,16 +667,16 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
         if not hit:
             okm, msg = nm.ensure_reachable(ip)
-            self.log_line(f"Most dla {ip}: {msg}")
+            self.log_line(f"Bridge for {ip}: {msg}")
             if okm:
                 hit = disc.probe_ip(ip, self.e_user.text().strip() or DEFAULT_USER, self.e_pass.text())
         if hit:
             if all(c["ip"] != hit["ip"] for c in self.cams):
                 self.cams.append(hit)
             self.on_scan_done(self.cams)
-            self.log_line(f"Dodano {hit['ip']}.")
+            self.log_line(f"Added {hit['ip']}.")
         else:
-            QMessageBox.warning(self, "Dodaj IP", f"{ip} nie odpowiada (HTTP/VISCA).")
+            QMessageBox.warning(self, "Add IP", f"{ip} does not respond (HTTP/VISCA).")
 
     def open_all_tabs(self):
         for c in self.cams:
@@ -710,7 +710,7 @@ class MainWindow(QMainWindow):
             from ui_control import CameraTab  # noqa: E402
         ip = ip or self.selected_ip()
         if not ip:
-            QMessageBox.warning(self, "Brak wyboru", "Zaznacz kamere w tabeli.")
+            QMessageBox.warning(self, "No selection", "Select a camera in the table.")
             return
         if ip in self.ctrl_ips():
             self.ctrl_tabs.setCurrentIndex(self.ctrl_ips().index(ip))
@@ -723,9 +723,9 @@ class MainWindow(QMainWindow):
                         save_frames=lambda: self.save_frames(ip), reachable=http)
         tab.setProperty("ip", ip)
         idx = self.ctrl_tabs.addTab(tab, self._tab_label(ip))
-        self.ctrl_tabs.setTabToolTip(idx, f"{ip} · sterowanie CGI")
+        self.ctrl_tabs.setTabToolTip(idx, f"{ip} · CGI control")
         self.ctrl_tabs.setCurrentWidget(tab)
-        self.log_line(f"Dodano sterowanie {ip}.")
+        self.log_line(f"Control tab added for {ip}.")
         self.refresh_panel_col()
         self.save_open_tabs()
 
@@ -768,7 +768,7 @@ class MainWindow(QMainWindow):
                 continue  # juz otwarta (np. dodana recznie tuz po skanie)
             if ip not in found:
                 # kamera nie odpowiada (inna siec) - zakladka zamulalaby okno
-                self.log_line(f"Pomijam zakladke {ip} (kamera nie odpowiada).")
+                self.log_line(f"Skipping tab {ip} (camera not responding).")
                 continue
             try:
                 port = next((c.get("http_port", 80) for c in self.cams if c["ip"] == ip), 80)
@@ -780,30 +780,30 @@ class MainWindow(QMainWindow):
                                 reachable=http)
                 tab.setProperty("ip", ip)
                 idx = self.ctrl_tabs.addTab(tab, self._tab_label(ip))
-                self.ctrl_tabs.setTabToolTip(idx, f"{ip} · sterowanie CGI")
+                self.ctrl_tabs.setTabToolTip(idx, f"{ip} · CGI control")
             except Exception as e:
-                self.log_line(f"Nie przywrocono {ip}: {e}"[:150])
+                self.log_line(f"Could not restore {ip}: {e}"[:150])
         self.refresh_panel_col()
 
     def open_external(self):
         ip = self.selected_ip()
         if not ip:
-            QMessageBox.warning(self, "Brak wyboru", "Zaznacz kamere w tabeli.")
+            QMessageBox.warning(self, "No selection", "Select a camera in the table.")
             return
         port = next((c.get("http_port", 80) for c in self.cams if c["ip"] == ip), 80)
         how, msg = self.edge.open(ip, port)
         if how == "no-browser":
             import webbrowser
             webbrowser.open(f"http://{ip}:{port}/")
-            self.log_line(msg + " Otwarto w domyslnej przegladarce.")
+            self.log_line(msg + " Opened in the default browser.")
         else:
-            self.log_line(msg + (" (Edge zapamieta haslo w profilu aplikacji.)"
+            self.log_line(msg + (" (Edge will remember the password in the app profile.)"
                                  if how == "opened" else ""))
 
     def on_diag(self):
         ip = self.selected_ip()
         if not ip:
-            QMessageBox.warning(self, "Brak wyboru", "Zaznacz kamere.")
+            QMessageBox.warning(self, "No selection", "Select a camera.")
             return
         ok_p, ping_msg = diag.ping(ip)
         h = diag.tcp_open(ip, 80)
@@ -813,7 +813,7 @@ class MainWindow(QMainWindow):
                f"80={'open' if h else 'closed'} 8080={'open' if h8 else 'closed'} "
                f"VISCA 52381={'open' if v else 'closed'}")
         self.log_line(txt.replace("\n", " | "))
-        QMessageBox.information(self, "Polaczenie", txt)
+        QMessageBox.information(self, "Connection", txt)
 
     # -- UDP: SET sieci + tabela panelu + CSV (formaty Sony) -----------------
     def _dev_defaults(self, ip: str) -> dict:
@@ -838,7 +838,7 @@ class MainWindow(QMainWindow):
             from ui_udp import WriteNetDialog  # noqa: E402
         ip = self.selected_ip()
         if not ip:
-            QMessageBox.warning(self, "Brak wyboru", "Zaznacz kamere w tabeli.")
+            QMessageBox.warning(self, "No selection", "Select a camera in the table.")
             return
         dlg = WriteNetDialog(self, defaults=self._dev_defaults(ip), old_ip=ip)
         dlg.applied.connect(self.on_udp_write_applied)
@@ -858,10 +858,10 @@ class MainWindow(QMainWindow):
                 cfg.save(self.config)
             except Exception:
                 pass
-        self.log_line(f"UDP SET: ACK potwierdzone, {old_ip} -> {new_ip}.")
+        self.log_line(f"UDP SET: ACK confirmed, {old_ip} -> {new_ip}.")
         QMessageBox.information(
             self, "UDP SET",
-            f"Kamera potwierdzila zmiane (ACK):\n\n  {old_ip}  ->  {new_ip}")
+            f"Camera confirmed the change (ACK):\n\n  {old_ip}  ->  {new_ip}")
         QTimer.singleShot(900, lambda: self.start_scan("fast"))
 
     def open_camtable(self):
@@ -879,8 +879,8 @@ class MainWindow(QMainWindow):
     def csv_menu(self):
         from PySide6.QtWidgets import QMenu
         menu = QMenu(self)
-        a1 = menu.addAction("Eksportuj liste kamer (CSV)...")
-        a2 = menu.addAction("Importuj liste kamer (CSV)...")
+        a1 = menu.addAction("Export camera list (CSV)...")
+        a2 = menu.addAction("Import camera list (CSV)...")
         act = menu.exec(self.btn_csv.mapToGlobal(self.btn_csv.rect().center()))
         if act == a1:
             self.export_camera_csv()
@@ -899,42 +899,42 @@ class MainWindow(QMainWindow):
 
     def export_camera_csv(self):
         if not self.cams:
-            QMessageBox.information(self, "CSV", "Lista urzadzen jest pusta.")
+            QMessageBox.information(self, "CSV", "Device list is empty.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Eksport listy kamer (CSV)", "rmip_cameras.csv",
-            "CSV (*.csv);;Wszystkie pliki (*)")
+            self, "Export camera list (CSV)", "rmip_cameras.csv",
+            "CSV (*.csv);;All files (*)")
         if not path:
             return
         try:
             with open(path, "w", encoding="utf-8", newline="") as f:
                 f.write(sony_csv.camera_csv_text([self._cam_csv_row(c) for c in self.cams]))
         except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "CSV", f"Nie udalo sie zapisac: {e}")
+            QMessageBox.warning(self, "CSV", f"Could not save: {e}")
             return
-        self.log_line(f"CSV: zapisano {len(self.cams)} kamer -> {path}")
-        QMessageBox.information(self, "CSV", f"Zapisano {len(self.cams)} wierszy:\n{path}")
+        self.log_line(f"CSV: saved {len(self.cams)} cameras -> {path}")
+        QMessageBox.information(self, "CSV", f"Saved {len(self.cams)} rows:\n{path}")
 
     def import_camera_csv(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Import listy kamer (CSV)", "", "CSV (*.csv);;Wszystkie pliki (*)")
+            self, "Import camera list (CSV)", "", "CSV (*.csv);;All files (*)")
         if not path:
             return
         try:
             with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
                 text = f.read()
         except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "CSV", f"Nie udalo sie wczytac: {e}")
+            QMessageBox.warning(self, "CSV", f"Could not load: {e}")
             return
         parsed = sony_csv.parse_camera_csv(text)
         rows = parsed["rows"]
         if parsed["warnings"]:
             extra = ("" if len(parsed["warnings"]) <= 12
-                     else f"\n... i {len(parsed['warnings']) - 12} wiecej")
-            QMessageBox.warning(self, "CSV - ostrzezenia",
+                     else f"\n... and {len(parsed['warnings']) - 12} more")
+            QMessageBox.warning(self, "CSV - warnings",
                                 "\n".join(parsed["warnings"][:12]) + extra)
         if not rows:
-            QMessageBox.warning(self, "CSV", "Plik nie zawiera wierszy kamer.")
+            QMessageBox.warning(self, "CSV", "File contains no camera rows.")
             return
         by_ip = {c["ip"]: c for c in self.cams}
         ips: list[str] = []
@@ -950,7 +950,7 @@ class MainWindow(QMainWindow):
                 continue
             cam = {"ip": ip, "http": False, "http_port": 0, "visca_52381": False,
                    "model": r.get("name") or "?", "csv": r,
-                   "note": f"z CSV: MAC {r.get('mac') or '?'} FW {r.get('version') or '?'}"}
+                   "note": f"from CSV: MAC {r.get('mac') or '?'} FW {r.get('version') or '?'}"}
             self.cams.append(cam)
             by_ip[ip] = cam
             added += 1
@@ -961,10 +961,10 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self.on_scan_done(list(self.cams))
-        self.log_line(f"CSV: wczytano {len(rows)} wierszy ({added} nowych na liscie).")
+        self.log_line(f"CSV: loaded {len(rows)} rows ({added} new on the list).")
         QMessageBox.information(
             self, "CSV",
-            f"Wczytano {len(rows)} kamer z pliku. Nowych na liscie: {added}.")
+            f"Loaded {len(rows)} cameras from the file. New on the list: {added}.")
         self.start_scan("fast")
 
 
@@ -975,12 +975,25 @@ def app_icon():
     return QIcon(os.path.normpath(path))
 
 
+def set_windows_app_id():
+    """Windows: wlasny AppUserModelID, zeby taskbar bral ikone z okna (nie z pythona)."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "wertos97.RMIPPlusPlus")
+    except Exception:
+        pass
+
+
 def run():
     import sys
     try:
         from .theme import apply_theme
     except ImportError:
         from theme import apply_theme  # noqa: E402
+    set_windows_app_id()
     app = QApplication(sys.argv)
     apply_theme(app)
     app.setWindowIcon(app_icon())

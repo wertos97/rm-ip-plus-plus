@@ -106,7 +106,7 @@ class CameraAPI:
             if r.status_code in (200, 204):
                 return True, r.text.strip()
             if r.status_code == 401:
-                return False, "401 - zly login/haslo."
+                return False, "401 - wrong login/password."
             return False, f"HTTP {r.status_code}: {r.text[:150]}"
         except Exception as e:
             return False, str(e)[:200]
@@ -147,7 +147,7 @@ class CameraAPI:
             if direction == "onepushaf":
                 return self.one_push_af_press()
             # BRC-AM7 nie ma ciaglego ruchu focus - UI kroczkuje przez focus_step()
-            return False, "BRC-AM7: focus bez ruchu ciaglego (Near/Far krokuje)."
+            return False, "BRC-AM7: no continuous focus (Near/Far steps)."
         return self.cmd("ptzf.cgi", f"Move={direction},{int(speed)}")  # near/far/onepushaf
 
     def focus_step(self, direction: str, step: int = 0x0400, timeout: float = 2.0) -> tuple[bool, str]:
@@ -160,16 +160,16 @@ class CameraAPI:
                 return False, str(pt)[:120]
             parts = (pt.get("AbsolutePTZF") or "").split(",")
             if len(parts) < 4:
-                return False, "brak AbsolutePTZF w odpowiedzi"
+                return False, "no AbsolutePTZF in the reply"
             try:
                 self._focus_val = int(parts[3], 16)
             except ValueError:
-                return False, "zla wartosc focus"
+                return False, "bad focus value"
             self._focus_t = now
         d = step if direction == "near" else -step
         val = max(0, min(0xF7FF, self._focus_val + d))
         if val == self._focus_val:
-            return True, "krancowka"
+            return True, "end of range"
         ok, msg = self.cmd("ptzf.cgi", f"AbsoluteFocus={val:04x}")
         if ok:
             self._focus_val = val

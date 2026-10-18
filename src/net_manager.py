@@ -146,7 +146,7 @@ def _elevated_add(alias: str, ip: str, prefix: int) -> tuple[bool, str]:
         for a in list_ipv4_addresses():
             if a["alias"] == alias and a["ip"] == ip:
                 return True, "OK(elevated)"
-        return False, "elevacja wykonana, ale adresu nie widac na karcie (odmowa UAC?)"
+        return False, "elevation done, but the address is not visible on the adapter (UAC denied?)"
     except Exception as e:
         return False, str(e)[:300]
 
@@ -156,19 +156,19 @@ def add_temp_ip(interface_alias: str, ip: str, prefix: int = 24) -> tuple[bool, 
         ok, msg = _ps_add(interface_alias, ip, prefix)
         if ok:
             _remember(TempIp(interface_alias, ip, prefix))
-            extra = " (juz istnial)" if msg == "ALREADY" else ""
-            return True, f"Dodano {ip}/{prefix} do '{interface_alias}'{extra} [SkipAsSource]."
+            extra = " (already existed)" if msg == "ALREADY" else ""
+            return True, f"Added {ip}/{prefix} to '{interface_alias}'{extra} [SkipAsSource]."
         ok2, msg2 = _netsh_add(interface_alias, ip, prefix)
         if ok2:
             _remember(TempIp(interface_alias, ip, prefix))
-            return True, f"Dodano {ip}/{prefix} do '{interface_alias}' (netsh fallback)."
-        return False, f"Brak uprawnien lub blad: {msg} / {msg2}"
+            return True, f"Added {ip}/{prefix} to '{interface_alias}' (netsh fallback)."
+        return False, f"No rights or error: {msg} / {msg2}"
     ok, msg = _elevated_add(interface_alias, ip, prefix)
     if ok:
         _remember(TempIp(interface_alias, ip, prefix))
-        return True, f"Dodano {ip}/{prefix} do '{interface_alias}' (elevacja UAC)."
-    return False, (f"Potrzebny admin (UAC). Kliknij ponownie i zaakceptuj UAC. Szczegoly: {msg}. "
-                   f"Albo uruchom aplikacje jako administrator.")
+        return True, f"Added {ip}/{prefix} to '{interface_alias}' (UAC elevation)."
+    return False, (f"Admin rights needed (UAC). Click again and accept the UAC prompt. Details: {msg}. "
+                   f"Or run the app as administrator.")
 
 
 def remove_temp_ip(interface_alias: str, ip: str) -> tuple[bool, str]:
@@ -176,7 +176,7 @@ def remove_temp_ip(interface_alias: str, ip: str) -> tuple[bool, str]:
     if (interface_alias, ip) not in live:
         # adresu juz nie ma - tylko zapomnij, ZERO UAC
         _forget(interface_alias, ip)
-        return True, f"{ip} juz nie ma na '{interface_alias}' (bez UAC)."
+        return True, f"{ip} is already gone from '{interface_alias}' (no UAC)."
     if is_admin():
         esc = interface_alias.replace("'", "''")
         script = (f"Remove-NetIPAddress -InterfaceAlias '{esc}' -IPAddress '{ip}' "
@@ -186,22 +186,22 @@ def remove_temp_ip(interface_alias: str, ip: str) -> tuple[bool, str]:
                   f"name={interface_alias}", f"addr={ip}"])
         _forget(interface_alias, ip)
         if p.returncode == 0 or r.returncode == 0:
-            return True, f"Usunieto {ip} z '{interface_alias}'."
+            return True, f"Removed {ip} from '{interface_alias}'."
         out = (((p.stderr or "") + (r.stderr or ""))).strip()[:300]
-        return False, f"Nie udalo sie usunac {ip} (moze juz go nie ma). {out}"
+        return False, f"Could not remove {ip} (maybe already gone). {out}"
     # bez admina: jednorazowa elevacja usuwania (UAC), weryfikacja skutku
     script = (f"Start-Process netsh -ArgumentList 'interface ipv4 delete address "
               f"name=\"{interface_alias}\" addr={ip}' -Verb RunAs -Wait")
     try:
         _run_ps(script, timeout=60)
     except Exception as e:
-        return False, f"Elevacja usuwania nieudana: {e}"[:300]
+        return False, f"Removal elevation failed: {e}"[:300]
     gone = all(not (a["alias"] == interface_alias and a["ip"] == ip)
                for a in list_ipv4_addresses())
     _forget(interface_alias, ip)
     if gone:
-        return True, f"Usunieto {ip} z '{interface_alias}' (elevacja UAC)."
-    return False, f"Usuwanie {ip} niepotwierdzone (odmowa UAC?)."
+        return True, f"Removed {ip} from '{interface_alias}' (UAC elevation)."
+    return False, f"Removal of {ip} not confirmed (UAC denied?)."
 
 
 _CLEANED = False
@@ -240,7 +240,7 @@ def ensure_homes_visible(interface_alias: str, homes: list[str], prefix: int = 2
             bip = f"{base}.201"
         want.append((base, bip))
     if not want:
-        return True, "Wszystkie znane podsieci juz widoczne."
+        return True, "All known subnets are already visible."
     if is_admin():
         msgs = []
         for base, bip in want:
@@ -265,8 +265,8 @@ def ensure_homes_visible(interface_alias: str, homes: list[str], prefix: int = 2
         if (interface_alias, bip) in live:
             _remember(TempIp(interface_alias, bip, prefix))
     if done:
-        return True, f"Dobudowano most ({', '.join(done)}) na '{interface_alias}' (jedno UAC)."
-    return False, "Elevacja wykonana, ale adresow nie widac (odmowa UAC?)."
+        return True, f"Bridge built ({', '.join(done)}) on '{interface_alias}' (single UAC)."
+    return False, "Elevation done, but the addresses are not visible (UAC denied?)."
 
 
 def ensure_subnet_visible(interface_alias: str, subnet_ip: str = "192.168.0.200",

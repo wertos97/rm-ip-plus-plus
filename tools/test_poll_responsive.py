@@ -40,6 +40,6 @@ tab.shutdown()
 # heartbeat: ~62 tyknięcia w 12.5 s; nawet z narzutem powinno być > 40
 print(f"heartbeat: {ticks[0]} tickow w {elapsed:.1f}s")
 print(f"interwal timera po porazkach: {tab.timer.interval()} ms")
-assert ticks[0] >= 40, "petla zdarzen Qt byla blokowana!"
-assert tab.timer.interval() >= 5000, "brak backoffu po nieudanych pollach"
-print("POLLING OK - GUI nie zamulone, backoff dziala")
+assert ticks[0] >= 40, "the Qt event loop was blocked!"
+assert tab.timer.interval() >= 5000, "no backoff after failed polls"
+print("POLLING OK - GUI stays responsive, backoff works")

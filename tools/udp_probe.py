@@ -28,12 +28,12 @@ def _raw(data: bytes) -> str:
 
 def cmd_list(args) -> int:
     ips = sony_udp.local_ipv4s()
-    print(f"Lokalne IPv4: {', '.join(ips) if ips else '(brak)'}")
-    print(f"Wysylam {sony_udp.build_request()!r} na broadcast UDP "
+    print(f"Local IPv4: {', '.join(ips) if ips else '(none)'}")
+    print(f"Sending {sony_udp.build_request()!r} to UDP broadcast "
           f"{sony_udp.SONY_UDP_PORT}...")
     cams = sony_udp.discover(timeout=args.timeout, log=lambda s: print("  " + s))
     if not cams:
-        print("Brak odpowiedzi (zadna kamera Sony nie odpowiedziala).")
+        print("No replies (no Sony camera responded).")
         return 0
     print(f"\nZnaleziono {len(cams)} kamer:")
     for c in cams:
@@ -44,12 +44,12 @@ def cmd_list(args) -> int:
 
 
 def cmd_camtable(args) -> int:
-    print("Wysylam ENQ:camtable1..4 na broadcast UDP 52380...")
+    print("Sending ENQ:camtable1..4 to UDP 52380 broadcast...")
     res = sony_udp.query_camtable(timeout=args.timeout + 2.0,
                                   log=lambda s: print("  " + s))
     pages = res["pages"]
     if not pages:
-        print("Brak odpowiedzi panelu (0 stron).")
+        print("No panel replies (0 pages).")
         return 0
     for p in sorted(pages, key=lambda x: (x["src_ip"], x["page"])):
         print(f"\nStrona {p['page']}  panel={p['panel_mac'] or '?'}  z {p['src_ip']}")
@@ -70,18 +70,18 @@ def cmd_write(args) -> int:
         print(f"Blad: {e}")
         return 2
     if not sony_udp.is_ipv4(args.ip):
-        print("Blad: --ip musi byc poprawnym adresem IPv4")
+        print("Error: --ip must be a valid IPv4 address")
         return 2
-    print(f"SET sieci dla {mac}:")
+    print(f"Network SET for {mac}:")
     print(f"  IP={args.ip}  maska={args.mask}  brama={args.gw or '(pusta)'}  "
           f"nazwa={args.name}")
     if not args.yes:
         try:
-            ans = input("Wyslac? Kamera zmieni adres od razu po ACK [t/N]: ")
+            ans = input("Send? The camera changes its address right after the ACK [y/N]: ")
         except EOFError:
             ans = ""
         if ans.strip().lower() not in ("t", "tak", "y", "yes"):
-            print("Przerwano.")
+            print("Aborted.")
             return 1
     res = sony_udp.set_camera_network(mac, args.ip, args.mask, args.gw, args.name,
                                       timeout=args.timeout + 2.0)
@@ -95,23 +95,23 @@ def cmd_write(args) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Sony UDP 52380: wykrywanie/SET/camtable")
+    ap = argparse.ArgumentParser(description="Sony UDP 52380: discovery/SET/camtable")
     ap.add_argument("--timeout", type=float, default=2.5,
-                    help="ile sekund czekac na odpowiedzi (domyslnie 2.5)")
+                    help="seconds to wait for replies (default 2.5)")
     ap.add_argument("--camtable", action="store_true",
-                    help="odczytaj tabele kamer z panelu RM-IP (ENQ:camtable1..4)")
+                    help="read the camera table from the RM-IP panel (ENQ:camtable1..4)")
     ap.add_argument("--write", action="store_true",
-                    help="SET sieci kamery (wymaga --mac, --ip, --name)")
-    ap.add_argument("--mac", default="", help="MAC kamery, np. F8-4E-17-DE-30-9F")
-    ap.add_argument("--ip", default="", help="nowy adres IP kamery")
-    ap.add_argument("--mask", default="255.255.255.0", help="maska podsieci")
-    ap.add_argument("--gw", default="", help="brama (moze byc pusta)")
-    ap.add_argument("--name", default="", help="nazwa kamery (1-16 znakow ASCII)")
-    ap.add_argument("--yes", action="store_true", help="bez pytania o potwierdzenie")
+                    help="camera network SET (requires --mac, --ip, --name)")
+    ap.add_argument("--mac", default="", help="camera MAC, e.g. F8-4E-17-DE-30-9F")
+    ap.add_argument("--ip", default="", help="new camera IP address")
+    ap.add_argument("--mask", default="255.255.255.0", help="subnet mask")
+    ap.add_argument("--gw", default="", help="gateway (may be empty)")
+    ap.add_argument("--name", default="", help="camera name (1-16 ASCII characters)")
+    ap.add_argument("--yes", action="store_true", help="no confirmation prompt")
     args = ap.parse_args()
     if args.write:
         if not args.mac or not args.ip or not args.name:
-            print("Blad: --write wymaga --mac, --ip i --name")
+            print("Error: --write requires --mac, --ip and --name")
             return 2
         return cmd_write(args)
     if args.camtable:

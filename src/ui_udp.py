@@ -52,7 +52,7 @@ class WriteNetDialog(QDialog):
 
     def __init__(self, parent=None, defaults: dict | None = None, old_ip: str = ""):
         super().__init__(parent)
-        self.setWindowTitle("Sieć kamery")
+        self.setWindowTitle("Camera network")
         self.setMinimumWidth(560)
         self.old_ip = old_ip or ""
         self.worker: WriteWorker | None = None
@@ -73,11 +73,11 @@ class WriteNetDialog(QDialog):
         self.e_gw = QLineEdit(d.get("gateway", ""))
         self.e_name = QLineEdit(d.get("name", ""))
         rows = (
-            ("MAC kamery:", self.e_mac),
-            ("Adres IP:", self.e_ip),
-            ("Maska podsieci:", self.e_mask),
-            ("Brama:", self.e_gw),
-            ("Nazwa kamery:", self.e_name),
+            ("Camera MAC:", self.e_mac),
+            ("IP address:", self.e_ip),
+            ("Subnet mask:", self.e_mask),
+            ("Gateway:", self.e_gw),
+            ("Camera name:", self.e_name),
         )
         for i, (lbl, wdg) in enumerate(rows):
             g.addWidget(QLabel(lbl), i, 0)
@@ -90,11 +90,11 @@ class WriteNetDialog(QDialog):
         self.warn.setStyleSheet("color:#ffb14e;")
         self.warn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         if d.get("writable") is False:
-            self.warn.setText("Uwaga: kamera zgłosiła ostatnio WRITE:off — zapis może zostać "
-                              "odrzucony.")
+            self.warn.setText("Note: the camera last reported WRITE:off — the write may be "
+                              "rejected.")
         elif d.get("writable") is None:
-            self.warn.setText("Uwaga: brak danych WRITE — nie wiadomo, czy zapis jest "
-                              "odblokowany.")
+            self.warn.setText("Note: no WRITE data — cannot tell if writing is "
+                              "enabled.")
         self.warn.setVisible(bool(self.warn.text()))
         v.addWidget(self.warn)
 
@@ -105,17 +105,17 @@ class WriteNetDialog(QDialog):
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumHeight(84)
-        self.log.setPlaceholderText("Odpowiedzi ACK/NAK...")
+        self.log.setPlaceholderText("ACK/NAK replies...")
         v.addWidget(self.log)
 
         row = QHBoxLayout()
-        self.btn_send = QPushButton("Wyślij ustawienia")
+        self.btn_send = QPushButton("Send settings")
         self.btn_send.setProperty("kind", "primary")
         self.btn_send.setMinimumHeight(30)
         self.btn_send.clicked.connect(self.on_send)
         row.addWidget(self.btn_send)
         row.addStretch(1)
-        self.btn_close = QPushButton("Zamknij")
+        self.btn_close = QPushButton("Close")
         self.btn_close.clicked.connect(self.reject)
         row.addWidget(self.btn_close)
         v.addLayout(row)
@@ -131,28 +131,28 @@ class WriteNetDialog(QDialog):
         gw = self.e_gw.text().strip()
         name = self.e_name.text().strip()
         if not sony_udp.is_ipv4(ip):
-            QMessageBox.warning(self, "IP", f"{ip!r} nie jest poprawnym adresem IPv4.")
+            QMessageBox.warning(self, "IP", f"{ip!r} is not a valid IPv4 address.")
             return
         if not sony_udp.is_ipv4(mask):
-            QMessageBox.warning(self, "Maska", f"{mask!r} nie jest poprawną maską.")
+            QMessageBox.warning(self, "Mask", f"{mask!r} is not a valid mask.")
             return
         if gw and not sony_udp.is_ipv4(gw):
-            QMessageBox.warning(self, "Brama", f"{gw!r} nie jest poprawną bramą.")
+            QMessageBox.warning(self, "Gateway", f"{gw!r} is not a valid gateway.")
             return
         if not name or len(name) > 16 or any(not (0x20 <= ord(ch) <= 0x7E) for ch in name):
-            QMessageBox.warning(self, "Nazwa", "Nazwa: 1-16 znaków ASCII (np. CAM2).")
+            QMessageBox.warning(self, "Name", "Name: 1-16 ASCII characters (e.g. CAM2).")
             return
-        warn = (f"Kamera {mac} zmieni ustawienia sieciowe na:\n\n"
-                f"    IP:     {ip}\n    Maska:  {mask}\n    Brama:  {gw or '(pusta)'}\n"
-                f"    Nazwa:  {name}\n\n"
-                "Kamera straci stary adres po potwierdzeniu (ACK).\n\nKontynuować?")
-        ans = QMessageBox.warning(self, "Zmiana adresu kamery", warn,
+        warn = (f"Camera {mac} will change its network settings to:\n\n"
+                f"    IP:     {ip}\n    Maska:  {mask}\n    Brama:  {gw or '(empty)'}\n"
+                f"    Name:    {name}\n\n"
+                "The camera will lose its old address after the ACK.\n\nContinue?")
+        ans = QMessageBox.warning(self, "Change the camera address", warn,
                                   QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if ans != QMessageBox.Yes:
             return
         self.btn_send.setEnabled(False)
         self.status.setStyleSheet("color:#ffb14e;")
-        self.status.setText("Wysyłam i czekam na ACK/NAK (do 4 s)...")
+        self.status.setText("Sending, waiting for ACK/NAK (up to 4 s)...")
         self.log.clear()
         self.worker = WriteWorker(mac, ip, mask, gw, name, self)
         self.worker.done.connect(self.on_result)
@@ -164,25 +164,25 @@ class WriteNetDialog(QDialog):
         if res.get("ok"):
             who = res.get("reply_mac") or res.get("target_mac") or res.get("mac") or "?"
             self.status.setStyleSheet("color:#8fce8f;")
-            self.status.setText(f"ACK — kamera potwierdziła zmianę (MAC {who}).")
+            self.status.setText(f"ACK — the camera confirmed the change (MAC {who}).")
             self.applied.emit({"old_ip": self.old_ip, "ip": res.get("ip", ""),
                                "mac": who})
         elif kind == "NAK":
             self.status.setStyleSheet("color:#ff7b72;")
-            self.status.setText("NAK — kamera odrzuciła zmianę.")
+            self.status.setText("NAK — the camera rejected the change.")
         elif kind == "error":
             self.status.setStyleSheet("color:#ff7b72;")
-            self.status.setText(f"Błąd: {res.get('error')}")
+            self.status.setText(f"Error: {res.get('error')}")
         else:
             self.status.setStyleSheet("color:#ffb14e;")
-            self.status.setText("Brak odpowiedzi (timeout).")
+            self.status.setText("No reply (timeout).")
         replies = res.get("replies") or []
         for r in replies:
             self.log.appendPlainText(
                 f"{r.get('src_ip', '?'):>15}  {r.get('kind', '?'):<4} "
                 f"mac={r.get('mac') or '-'}  {_raw_text(r.get('raw') or b'')}")
         if not replies:
-            self.log.appendPlainText("(0 odpowiedzi)")
+            self.log.appendPlainText("(0 replies)")
 
 
 class CamtableWorker(QThread):
@@ -201,7 +201,7 @@ class CamtableDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Tabela kamer panelu")
+        self.setWindowTitle("Panel camera table")
         self.resize(780, 560)
         self.worker: CamtableWorker | None = None
         self._slots: dict[int, dict] = {}
@@ -210,13 +210,13 @@ class CamtableDialog(QDialog):
         v = QVBoxLayout(self)
         v.setContentsMargins(16, 14, 16, 12)
         v.setSpacing(8)
-        self.head = QLabel("Pytam panel o tabelę kamer...")
+        self.head = QLabel("Asking the panel for its camera table...")
         self.head.setWordWrap(True)
         self.head.setStyleSheet("color:#9aa0a6;")
         v.addWidget(self.head)
 
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Slot", "Grupa-Kamera", "Nazwa", "MAC", "IP"])
+        self.table.setHorizontalHeaderLabels(["Slot", "Group-Camera", "Name", "MAC", "IP"])
         hi = self.table.horizontalHeaderItem(0)
         if hi is not None:
             hi.setTextAlignment(Qt.AlignCenter)
@@ -240,22 +240,22 @@ class CamtableDialog(QDialog):
         self.raw = QPlainTextEdit()
         self.raw.setReadOnly(True)
         self.raw.setMaximumHeight(96)
-        self.raw.setPlaceholderText("Odpowiedzi panelu...")
+        self.raw.setPlaceholderText("Panel replies...")
         v.addWidget(self.raw)
 
         row = QHBoxLayout()
-        self.btn_refresh = QPushButton("Odśwież z panelu")
+        self.btn_refresh = QPushButton("Refresh from panel")
         self.btn_refresh.setProperty("kind", "primary")
         self.btn_refresh.clicked.connect(self.refresh)
         row.addWidget(self.btn_refresh)
-        self.btn_export = QPushButton("Eksport CSV…")
+        self.btn_export = QPushButton("Export CSV…")
         self.btn_export.clicked.connect(self.export_csv)
         row.addWidget(self.btn_export)
-        self.btn_import = QPushButton("Wczytaj CSV (podgląd)…")
+        self.btn_import = QPushButton("Load CSV (preview)…")
         self.btn_import.clicked.connect(self.import_csv)
         row.addWidget(self.btn_import)
         row.addStretch(1)
-        self.btn_close = QPushButton("Zamknij")
+        self.btn_close = QPushButton("Close")
         self.btn_close.clicked.connect(self.accept)
         row.addWidget(self.btn_close)
         v.addLayout(row)
@@ -268,7 +268,7 @@ class CamtableDialog(QDialog):
             return
         self._file_mode = False
         self.btn_refresh.setEnabled(False)
-        self.head.setText("Pytam panel o tabelę kamer...")
+        self.head.setText("Asking the panel for its camera table...")
         self.worker = CamtableWorker(self)
         self.worker.done.connect(self.on_pages)
         self.worker.start()
@@ -296,7 +296,7 @@ class CamtableDialog(QDialog):
         if not slots:
             self._slots = {}
             self.table.setRowCount(0)
-            self.head.setText("Brak odpowiedzi panelu.")
+            self.head.setText("No reply from the panel.")
             return
         self._slots = slots
         self._fill(slots)
@@ -328,10 +328,10 @@ class CamtableDialog(QDialog):
     def export_csv(self):
         slots = self._slots
         if not slots:
-            QMessageBox.information(self, "CSV", "Najpierw odczytaj tabelę z panelu.")
+            QMessageBox.information(self, "CSV", "Read the table from the panel first.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Eksport tabeli CSV", "rmip_table.csv", "CSV (*.csv);;Wszystkie pliki (*)")
+            self, "Export table CSV", "rmip_table.csv", "CSV (*.csv);;Wszystkie pliki (*)")
         if not path:
             return
         try:
@@ -345,7 +345,7 @@ class CamtableDialog(QDialog):
 
     def import_csv(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Wczytaj tabelę CSV", "", "CSV (*.csv);;Wszystkie pliki (*)")
+            self, "Load table CSV", "", "CSV (*.csv);;Wszystkie pliki (*)")
         if not path:
             return
         try:
@@ -359,10 +359,10 @@ class CamtableDialog(QDialog):
         if parsed["warnings"]:
             extra = "" if len(parsed["warnings"]) <= 12 else \
                 f"\n... i {len(parsed['warnings']) - 12} więcej"
-            QMessageBox.warning(self, "CSV — ostrzeżenia",
+            QMessageBox.warning(self, "CSV — warnings",
                                 "\n".join(parsed["warnings"][:12]) + extra)
         if not rows:
-            QMessageBox.warning(self, "CSV", "Plik nie zawiera wierszy tabeli.")
+            QMessageBox.warning(self, "CSV", "File contains no table rows.")
             return
         self._file_mode = True
         self._slots = {r["slot"]: r for r in rows}

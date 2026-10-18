@@ -67,7 +67,7 @@ def main(duration: int = 300):
     s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     s.bind(("0.0.0.0", 67))
     s.settimeout(5)
-    print(f"DHCP serwer: {OFFER_IP} <- {SERVER_IP} ({duration} s, celuj w kamere)...", flush=True)
+    print(f"DHCP server: {OFFER_IP} <- {SERVER_IP} ({duration} s, aim at the camera)...", flush=True)
     end = time.time() + duration
     acked = False
     while time.time() < end and not acked:
@@ -87,9 +87,9 @@ def main(duration: int = 300):
         elif t is not None:
             print(f"DHCP typ {t} od {mac}", flush=True)
     if acked:
-        print("SUKCES: kamera przyjela", OFFER_IP, flush=True)
+        print("SUCCESS: camera accepted", OFFER_IP, flush=True)
     else:
-        print("Koniec czasu bez REQUEST.", flush=True)
+        print("Timed out without REQUEST.", flush=True)
 
 
 if __name__ == "__main__":

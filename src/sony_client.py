@@ -69,7 +69,7 @@ class SonyCamera:
         try:
             r = self._get("/command/inquiry.cgi?inq=network", timeout=timeout)
             if r.status_code == 401:
-                return False, "401 Unauthorized - zle login/haslo (domyslnie admin/admin)."
+                return False, "401 Unauthorized - wrong login/password (default admin/admin)."
             if r.status_code != 200:
                 return False, f"HTTP {r.status_code}: {r.text[:300]}"
             out: dict[str, str] = {}
@@ -103,8 +103,8 @@ class SonyCamera:
                 except Exception:
                     pass
             if not any(k.lower() in SONY_NET_KEYS for k in out):
-                return False, ("HTTP 200, ale brak pol odpowiedzi Sony (to nie "
-                               "kamera - np. router, NAS, captive portal).")
+                return False, ("HTTP 200, but no Sony reply fields (not a "
+                               "camera - e.g. router, NAS, captive portal).")
             return True, out
         except Exception as e:
             return False, str(e)[:300]

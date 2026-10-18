@@ -49,5 +49,5 @@ def env_report() -> str:
         hn = socket.gethostname()
         lines.append(f"host: {hn} -> {socket.gethostbyname(hn)}")
     except Exception as e:
-        lines.append(f"host blad: {e}")
+        lines.append(f"host error: {e}")
     return " | ".join(lines)

@@ -104,21 +104,21 @@ class EdgeTabs:
     def open(self, ip: str, port: int = 80) -> tuple[str, str]:
         exe = browser_exe()
         if not exe:
-            return "no-browser", "Brak Edge/Chrome."
+            return "no-browser", "Edge/Chrome not found."
         proc = self.procs.get(ip)
         if proc is not None and proc.poll() is None:
             hwnd = self._find(ip, proc.pid)
             if hwnd and focus_window(hwnd):
-                return "focused", f"Przywrocono okno {ip}."
+                return "focused", f"Restored window {ip}."
         # okno moglo przezyc restart aplikacji - szukaj w procesach profilu
         hwnd = self._find(ip, None)
         if hwnd and focus_window(hwnd):
-            return "focused", f"Przywrocono okno {ip}."
+            return "focused", f"Restored window {ip}."
         url = f"http://{ip}:{port}/"
         try:
             self.procs[ip] = subprocess.Popen(
                 [exe, f"--app={url}", f"--user-data-dir={profile_dir()}",
                  "--no-first-run", "--no-default-browser-check"])
         except Exception as e:
-            return "no-browser", f"Start przegladarki nieudany: {e}"[:200]
-        return "opened", f"Otwarto okno {url} (Edge, profil aplikacji)."
+            return "no-browser", f"Browser start failed: {e}"[:200]
+        return "opened", f"Opened window {url} (Edge, app profile)."

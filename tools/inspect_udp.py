@@ -99,8 +99,8 @@ csv_txt = sc.table_csv_text({1: {"name": "CAM2", "mac": "F8-4E-17-DE-30-9F",
 parsed = sc.parse_table_csv(csv_txt)
 ct._slots = {r["slot"]: r for r in parsed["rows"]}
 ct._fill(ct._slots)
-ct.head.setText("Podgląd z pliku: rmip_table.csv · wierszy: 112, "
-                "wypełnionych: 1 · (bez zapisu do panelu)")
+ct.head.setText("Preview from file: rmip_table.csv · rows: 112, "
+                "filled: 1 · (no write to the panel)")
 pump(0.4)
 snap("udp_06_camtable_csv", ct)
 if ct.worker is not None:

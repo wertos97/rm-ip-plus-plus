@@ -263,7 +263,7 @@ def normalize_mac(mac: str) -> str:
     hexs = re.sub(r"[^0-9A-Fa-f]", "", mac or "")
     if len(hexs) != 12:
         raise ValueError(
-            f"MAC musi miec 12 znakow hex, np. F8-4E-17-DE-30-9F (dostalem {mac!r})")
+            f"MAC must have 12 hex digits, e.g. F8-4E-17-DE-30-9F (got {mac!r})")
     return "-".join(hexs[i:i + 2] for i in range(0, 12, 2)).upper()
 
 
@@ -275,7 +275,7 @@ def is_ipv4(value: str) -> bool:
 def _clean_top_value(value: str, what: str) -> str:
     s = str(value or "").strip()
     if any(ch in s for ch in "\x00\x02\x03\xff"):
-        raise ValueError(f"{what}: niedozwolony znak sterujacy")
+        raise ValueError(f"{what}: illegal control character")
     return s
 
 
@@ -287,19 +287,19 @@ def build_set_network(mac: str, ip: str, mask: str, gateway: str, name: str) -> 
     """
     mac = normalize_mac(mac)
     ip = _clean_top_value(ip, "IP")
-    mask = _clean_top_value(mask, "maska")
-    gateway = _clean_top_value(gateway, "brama")
-    name = _clean_top_value(name, "nazwa")
+    mask = _clean_top_value(mask, "mask")
+    gateway = _clean_top_value(gateway, "gateway")
+    name = _clean_top_value(name, "name")
     if not is_ipv4(ip):
-        raise ValueError(f"IP {ip!r} nie jest poprawnym adresem IPv4")
+        raise ValueError(f"IP {ip!r} is not a valid IPv4 address")
     if not is_ipv4(mask):
-        raise ValueError(f"maska {mask!r} nie jest poprawna")
+        raise ValueError(f"mask {mask!r} is not valid")
     if gateway and not is_ipv4(gateway):
-        raise ValueError(f"brama {gateway!r} nie jest poprawna")
+        raise ValueError(f"gateway {gateway!r} is not valid")
     if not name:
-        raise ValueError("nazwa nie moze byc pusta")
+        raise ValueError("name cannot be empty")
     if len(name) > 16 or any(not (0x20 <= ord(ch) <= 0x7E) for ch in name):
-        raise ValueError("nazwa: maks. 16 drukowalnych znakow ASCII, bez ogonkow")
+        raise ValueError("name: max 16 printable ASCII characters, no diacritics")
     return (b"\x02MAC:" + mac.encode("ascii") + b"\xffIPADR:" + ip.encode("ascii") +
             b"\xffMASK:" + mask.encode("ascii") + b"\xffGATEWAY:" +
             gateway.encode("ascii") + b"\xffNAME:" + name.encode("ascii") + b"\xff\x03")
@@ -308,7 +308,7 @@ def build_set_network(mac: str, ip: str, mask: str, gateway: str, name: str) -> 
 def build_camtable_query(page: int = 1) -> bytes:
     """ENQ:camtable<N> - N=1..4; kazda strona to 28 slotow tabeli panelu."""
     if not 1 <= int(page) <= CAMTABLE_PAGES:
-        raise ValueError(f"strona camtable {page} spoza zakresu 1..{CAMTABLE_PAGES}")
+        raise ValueError(f"camtable page {page} out of range 1..{CAMTABLE_PAGES}")
     return f"\x02ENQ:camtable{int(page)}\xff\x03".encode("latin-1")
 
 

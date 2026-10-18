@@ -20,7 +20,7 @@ SIZES = (16, 32, 48, 64, 128, 256)
 def render_png(size):
     r = QSvgRenderer(SVG)
     if not r.isValid():
-        raise SystemExit("SVG nieparsowalny: " + SVG)
+        raise SystemExit("unparseable SVG: " + SVG)
     img = QImage(size, size, QImage.Format_ARGB32)
     img.fill(Qt.GlobalColor.transparent)
     p = QPainter(img)
@@ -46,7 +46,7 @@ def main():
         out += png
     with open(ICO, "wb") as fh:
         fh.write(out)
-    print("ok", ICO, len(out), "bajtow,", len(entries), "rozmiarow")
+    print("ok", ICO, len(out), "bytes,", len(entries), "sizes")
 
 
 if __name__ == "__main__":
