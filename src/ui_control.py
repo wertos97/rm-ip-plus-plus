@@ -695,9 +695,9 @@ class _StatusPoll(QThread):
 
 class CameraTab(QWidget):
     def __init__(self, ip: str, user: str, password: str, http_port: int = 80, log=None,
-                 frames=None, save_frames=None, reachable: bool = True):
+                 frames=None, save_frames=None, reachable: bool = True, api=None):
         super().__init__()
-        self.api = CameraAPI(ip, user, password, http_port)
+        self.api = api if api is not None else CameraAPI(ip, user, password, http_port)
         self.log = log or (lambda t: None)
         self.preset_names: dict[int, str] = {}
         self.frames: list = list(frames or [None] * 16)

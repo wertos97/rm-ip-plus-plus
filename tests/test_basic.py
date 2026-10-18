@@ -260,4 +260,31 @@ bi = nm.best_bridge_iface()
 print("best_bridge_iface:", bi)
 assert bi is None or isinstance(bi, str)
 print("iface-auto OK")
+
+# --- demo camera (symulowana, bez sieci) ---
+from demo_api import DemoCameraAPI  # noqa: E402
+
+demo = DemoCameraAPI()
+assert demo.family == "srg"
+ok, st = demo.status()
+assert ok and isinstance(st, dict) and "," in st["AbsolutePTZF"], st
+start = st["AbsolutePTZF"]
+demo.move("right", 10)
+demo.zoom_move("tele", 6)
+ok, st2 = demo.status()
+assert st2["AbsolutePTZF"] != start, "demo PTZ did not move"
+assert demo.preset_set(3, "Test")[0] is True
+assert demo.preset_list()[1] == {3: "Test"}
+demo.home()
+assert demo.preset_recall(3)[0] is True
+assert demo.status()[1]["AbsolutePTZF"] != "0000,0000,0000,8000"
+assert demo.preset_recall(9)[0] is False, "empty preset must not recall"
+ok, im = demo.imaging()
+assert ok and im.get("ExposureMode") == "auto", im
+assert demo.set_imaging(ExposureMode="manual")[0] is True
+assert demo.imaging()[1]["ExposureMode"] == "manual"
+assert demo.set_focus_mode("manual")[0] is True
+assert demo.still() is None or isinstance(demo.still(), bytes)  # bez QApplication -> None
+print("demo camera OK")
+
 print("ALL TESTS PASSED")

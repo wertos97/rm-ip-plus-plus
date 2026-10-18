@@ -35,6 +35,7 @@ try:
     from . import sony_csv, sony_udp
     from .sony_client import DEFAULT_USER, DEFAULT_PASSWORD
     from .version import __version__ as APP_VERSION
+    from .demo_api import DEMO_IP, DemoCameraAPI
 except ImportError:
     import net_manager as nm  # noqa: E402
     import discovery as disc  # noqa: E402
@@ -46,6 +47,7 @@ except ImportError:
     import sony_udp  # noqa: E402
     from sony_client import DEFAULT_USER, DEFAULT_PASSWORD  # noqa: E402
     from version import __version__ as APP_VERSION  # noqa: E402
+    from demo_api import DEMO_IP, DemoCameraAPI  # noqa: E402
 
 
 class _CenterHint(QLabel):
@@ -378,6 +380,17 @@ class MainWindow(QMainWindow):
         self.cam_table.customContextMenuRequested.connect(self.dev_menu)
         self.cam_table.doubleClicked.connect(self.open_web_tab)
         self.cam_empty = _CenterHint("No devices.", self.cam_table.viewport())
+        self.btn_demo = QPushButton("Add demo camera", self.cam_table.viewport())
+        self.btn_demo.setCursor(Qt.PointingHandCursor)
+        self.btn_demo.setStyleSheet(
+            "QPushButton { color:#ffd9a0; background:#141619; border:1px solid #3a2c14;"
+            " border-radius:5px; padding:5px 12px; }"
+            "QPushButton:hover { border-color:#ff9e2c; }")
+        self.btn_demo.setToolTip(
+            "Add a simulated camera to explore the interface without hardware.")
+        self.btn_demo.clicked.connect(self.add_demo_camera)
+        self.btn_demo.hide()
+        self.cam_table.viewport().installEventFilter(self)
         lv.addWidget(self.cam_table, 1)
         devbtn = QHBoxLayout()
         devbtn.setSpacing(8)
@@ -575,9 +588,14 @@ class MainWindow(QMainWindow):
             self.worker.stop()
             self.log_line("Scan stopped.")
 
-    def on_scan_done(self, found, gen=None):
+    def on_scan_done(self, found, gen=None, announce=True):
         if gen is not None and gen != getattr(self, "_scan_gen", gen):
             return  # przestarzaly skan - ignoruj
+        # demo camera zostaje na liscie takze po kolejnym skanie
+        demo = next((c for c in self.cams if c["ip"] == DEMO_IP), None)
+        found = list(found)
+        if demo is not None and not any(c["ip"] == DEMO_IP for c in found):
+            found.append(demo)
         self.prog.setVisible(False)
         self.btn_stop.setEnabled(False)
         self.btn_stop.setVisible(False)
@@ -614,18 +632,55 @@ class MainWindow(QMainWindow):
         self.dev_title.setText(f"Devices ({len(self.cams)})")
         self.cam_empty.setVisible(not self.cams)
         self.cam_empty.raise_()
+        self.btn_demo.setVisible(not self.cams)
+        if not self.cams:
+            self._place_demo_btn()
+            self.btn_demo.raise_()
         n = len(found)
-        self.lbl.setText(f"Found: {n}")
-        self.log_line(f"Scan done: {[c['ip'] for c in found]}")
+        if announce:
+            self.lbl.setText(f"Found: {n}")
+            self.log_line(f"Scan done: {[c['ip'] for c in found]}")
         if not getattr(self, "_restored", False):
             self._restored = True
             self.restore_tabs()
         try:
-            known = list(dict.fromkeys(list(self.config.get("known_ips", [])) + [c["ip"] for c in found]))[:20]
+            known = list(dict.fromkeys(
+                list(self.config.get("known_ips", [])) +
+                [c["ip"] for c in found if c["ip"] != DEMO_IP]))[:20]
             self.config["known_ips"] = known
             cfg.save(self.config)
         except Exception:
             pass
+
+    def eventFilter(self, obj, ev):
+        if obj is self.cam_table.viewport() and ev.type() == QEvent.Type.Resize:
+            self._place_demo_btn()
+        return super().eventFilter(obj, ev)
+
+    def _place_demo_btn(self):
+        if not hasattr(self, "btn_demo"):
+            return
+        vp = self.cam_table.viewport()
+        self.btn_demo.adjustSize()
+        x = max(0, (vp.width() - self.btn_demo.width()) // 2)
+        y = min(max(0, vp.height() // 2 + 26),
+                max(0, vp.height() - self.btn_demo.height() - 8))
+        self.btn_demo.move(x, y)
+
+    def add_demo_camera(self):
+        """Add the simulated camera (no network) and open its control tab."""
+        if not any(c["ip"] == DEMO_IP for c in self.cams):
+            self.cams.append({
+                "ip": DEMO_IP,
+                "http": True,
+                "http_port": 0,
+                "visca_52381": False,
+                "model": "DEMO",
+                "note": "Simulated camera - no network. Safe to experiment.",
+            })
+            self.log_line("Demo camera added (simulated, no hardware).")
+        self.on_scan_done(self.cams, announce=False)
+        self.add_ctrl_tab(DEMO_IP)
 
     def selected_ip(self):
         r = self.cam_table.currentRow()
@@ -744,10 +799,12 @@ class MainWindow(QMainWindow):
             return
         port = next((c.get("http_port", 80) for c in self.cams if c["ip"] == ip), 80)
         http = bool(next((c.get("http") for c in self.cams if c["ip"] == ip), False))
+        demo_api = DemoCameraAPI(ip) if ip == DEMO_IP else None
         tab = CameraTab(ip, self.e_user.text().strip() or DEFAULT_USER,
                         self.e_pass.text(), http_port=port, log=self.log_line,
                         frames=self.config.get("frames", {}).get(ip),
-                        save_frames=lambda: self.save_frames(ip), reachable=http)
+                        save_frames=lambda: self.save_frames(ip),
+                        reachable=http or demo_api is not None, api=demo_api)
         tab.setProperty("ip", ip)
         idx = self.ctrl_tabs.addTab(tab, self._tab_label(ip))
         self.ctrl_tabs.setTabToolTip(idx, f"{ip} · CGI control")
@@ -779,7 +836,7 @@ class MainWindow(QMainWindow):
 
     def save_open_tabs(self):
         try:
-            self.config["open_tabs"] = self.ctrl_ips()
+            self.config["open_tabs"] = [ip for ip in self.ctrl_ips() if ip != DEMO_IP]
             cfg.save(self.config)
         except Exception:
             pass
@@ -817,6 +874,10 @@ class MainWindow(QMainWindow):
         if not ip:
             QMessageBox.warning(self, "No selection", "Select a camera in the table.")
             return
+        if ip == DEMO_IP:
+            QMessageBox.information(self, "Demo camera",
+                                    "The demo camera has no web interface.")
+            return
         port = next((c.get("http_port", 80) for c in self.cams if c["ip"] == ip), 80)
         how, msg = self.edge.open(ip, port)
         if how == "no-browser":
@@ -831,6 +892,10 @@ class MainWindow(QMainWindow):
         ip = self.selected_ip()
         if not ip:
             QMessageBox.warning(self, "No selection", "Select a camera.")
+            return
+        if ip == DEMO_IP:
+            QMessageBox.information(self, "Demo camera",
+                                    "Simulated camera - no network to test.")
             return
         ok_p, ping_msg = diag.ping(ip)
         h = diag.tcp_open(ip, 80)
@@ -866,6 +931,10 @@ class MainWindow(QMainWindow):
         ip = self.selected_ip()
         if not ip:
             QMessageBox.warning(self, "No selection", "Select a camera in the table.")
+            return
+        if ip == DEMO_IP:
+            QMessageBox.information(self, "Demo camera",
+                                    "The demo camera has no network settings.")
             return
         dlg = WriteNetDialog(self, defaults=self._dev_defaults(ip), old_ip=ip)
         dlg.applied.connect(self.on_udp_write_applied)
@@ -925,7 +994,8 @@ class MainWindow(QMainWindow):
                 "version": u.get("softversion") or net.get("SoftVersion") or ""}
 
     def export_camera_csv(self):
-        if not self.cams:
+        rows_out = [self._cam_csv_row(c) for c in self.cams if c["ip"] != DEMO_IP]
+        if not rows_out:
             QMessageBox.information(self, "CSV", "Device list is empty.")
             return
         path, _ = QFileDialog.getSaveFileName(
@@ -935,12 +1005,12 @@ class MainWindow(QMainWindow):
             return
         try:
             with open(path, "w", encoding="utf-8", newline="") as f:
-                f.write(sony_csv.camera_csv_text([self._cam_csv_row(c) for c in self.cams]))
+                f.write(sony_csv.camera_csv_text(rows_out))
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "CSV", f"Could not save: {e}")
             return
-        self.log_line(f"CSV: saved {len(self.cams)} cameras -> {path}")
-        QMessageBox.information(self, "CSV", f"Saved {len(self.cams)} rows:\n{path}")
+        self.log_line(f"CSV: saved {len(rows_out)} cameras -> {path}")
+        QMessageBox.information(self, "CSV", f"Saved {len(rows_out)} rows:\n{path}")
 
     def import_camera_csv(self):
         path, _ = QFileDialog.getOpenFileName(

@@ -13,6 +13,9 @@ image (exposure/WB) and a Wi-Fi + Ethernet network bridge. No IP setup required.
 3. Double-click a camera (or use **Control selected**) to open its control tab.
 
 Notes:
+- **No cameras?** After a scan with no results, the device list shows an
+  **Add demo camera** button: a simulated camera (no network, no hardware) so
+  you can explore every tab, PTZ, presets, shots and the image panel safely.
 - **Cameras on another subnet / directly on Ethernet:** use **Bridge unreachable**.
   Windows asks for admin rights once (UAC) and adds a temporary secondary IP on
   Ethernet. Wi-Fi stays online - Internet traffic keeps using Wi-Fi.
@@ -90,12 +93,15 @@ no Python installation is needed on the target machine.
 ## Testing without a camera
 
 ```
-python tests/test_basic.py      # quick module test
+python tests/test_basic.py      # quick module test (includes the demo camera)
 python tools/mock_sony_cam.py   # fake camera on 127.0.0.1:8080 + :52381
 python tools/udp_probe.py       # UDP 52380 listen/diagnostics
 python tools/udp_probe.py --camtable            # table from the RM-IP panel
 python tools/udp_probe.py --write --mac ... --ip ... --name ...   # network SET
 ```
+
+Without any hardware you can also just run the app and click **Add demo camera**
+(it appears when a scan finds no devices).
 
 ## Notes
 
@@ -121,6 +127,7 @@ python tools/udp_probe.py --write --mac ... --ip ... --name ...   # network SET
 - `src/theme.py` - Alpha 7 theme (black + amber)
 - `src/edge_view.py` - Edge `--app` window per camera (fallback)
 - `src/version.py` - app version (single source for UI and exe metadata)
+- `src/demo_api.py` - simulated camera (demo mode, no network)
 - `assets/icon.svg` - app icon (vector); `python tools/make_ico.py` -> `assets/icon.ico`
 - `tools/` - developer utilities (UI harness, UDP probe, icon generator, mock camera)
 
