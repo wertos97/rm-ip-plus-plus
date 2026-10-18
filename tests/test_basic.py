@@ -261,6 +261,20 @@ print("best_bridge_iface:", bi)
 assert bi is None or isinstance(bi, str)
 print("iface-auto OK")
 
+# --- credentials: model defaults, saved per-camera entries, legacy fallback ---
+import creds as credman  # noqa: E402
+
+cfg_c = {"user": "admin", "password": "admin"}  # legacy default -> ignored as custom
+cand = credman.candidates(cfg_c, "192.168.4.101")
+assert cand == [("admin", "admin123"), ("admin", "Admin123"), ("admin", "admin")], cand
+credman.save_credentials(cfg_c, "192.168.4.101", "root", "secret")
+assert credman.candidates(cfg_c, "192.168.4.101")[0] == ("root", "secret")
+assert credman.saved_credentials(cfg_c, "192.168.4.101") == ("root", "secret")
+cfg_custom = {"user": "operator", "password": "pw"}
+assert ("operator", "pw") in credman.candidates(cfg_custom, "10.0.0.5")
+assert credman.candidates({}, "10.0.0.6")[0] == ("admin", "admin123")
+print("credentials OK")
+
 # --- demo camera (symulowana, bez sieci) ---
 from demo_api import DemoCameraAPI  # noqa: E402
 

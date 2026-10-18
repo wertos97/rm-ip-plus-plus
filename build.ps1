@@ -5,6 +5,7 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 $ver = (Select-String -Path "src\version.py" -Pattern '__version__\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+$exe = "RMIPpp_${ver}_win64"
 
 Write-Host "== deps =="
 python -m pip install --upgrade pip
@@ -17,21 +18,27 @@ Write-Host "== assets =="
 python tools/make_ico.py
 python tools/make_version_info.py
 
+if (Test-Path "dist\$exe.exe") {
+  try {
+    Remove-Item "dist\$exe.exe" -Force
+  } catch {
+    throw "Close the running $exe.exe first, then build again."
+  }
+}
+
 Write-Host "== pyinstaller (onefile) =="
-pyinstaller --noconfirm --clean --onefile --windowed --name "RMIPpp" `
+pyinstaller --noconfirm --clean --onefile --windowed --name $exe `
   --paths "src" `
   --icon "assets/icon.ico" `
   --add-data "assets;assets" `
   --version-file "build/version_info.txt" `
-  --distpath "dist\.onefile" `
+  --distpath "dist" `
   main.py
 
-Copy-Item "dist\.onefile\RMIPpp.exe" "dist\RMIPpp_${ver}_win64.exe" -Force
-Remove-Item "dist\.onefile" -Recurse -Force
 if (Test-Path "dist\RMIPpp") { Remove-Item "dist\RMIPpp" -Recurse -Force }
 
 Write-Host ""
-Write-Host "Done: $PSScriptRoot\dist\RMIPpp_${ver}_win64.exe"
+Write-Host "Done: $PSScriptRoot\dist\$exe.exe"
 Write-Host "The single-file exe unpacks itself to %TEMP% on start (a few seconds)."
 Write-Host ""
 Write-Host "Optional firewall rules (run once as admin) if discovery replies are blocked:"

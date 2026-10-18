@@ -8,8 +8,9 @@ APP_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "RMIP
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
 
 DEFAULTS = {
-    "user": "admin",
-    "password": "admin",
+    "user": "",
+    "password": "",
+    "credentials": {},
     "subnet_base": "192.168.0.200",
     "prefix": 24,
     "scan_cidr": "192.168.0.0/24",

@@ -33,9 +33,11 @@ try:
     from . import subnet_bridge as bridge
     from . import edge_view as ev
     from . import sony_csv, sony_udp
-    from .sony_client import DEFAULT_USER, DEFAULT_PASSWORD
     from .version import __version__ as APP_VERSION
     from .demo_api import DEMO_IP, DemoCameraAPI
+    from . import creds as credman
+    from .ui_creds import CredentialsDialog
+    from .win_shortcut import ensure_shortcut
 except ImportError:
     import net_manager as nm  # noqa: E402
     import discovery as disc  # noqa: E402
@@ -45,9 +47,11 @@ except ImportError:
     import edge_view as ev  # noqa: E402
     import sony_csv  # noqa: E402
     import sony_udp  # noqa: E402
-    from sony_client import DEFAULT_USER, DEFAULT_PASSWORD  # noqa: E402
     from version import __version__ as APP_VERSION  # noqa: E402
     from demo_api import DEMO_IP, DemoCameraAPI  # noqa: E402
+    import creds as credman  # noqa: E402
+    from ui_creds import CredentialsDialog  # noqa: E402
+    from win_shortcut import ensure_shortcut  # noqa: E402
 
 
 class _CenterHint(QLabel):
@@ -99,6 +103,9 @@ feeds SDI/HDMI to a mixer. The app sends HTTP CGI (Digest) commands and reads ca
 <li><span class="tag">Network</span> &mdash; camera discovery (ARP, SSDP, UDP 52380);
   IP / mask / gateway / name change over UDP (SET + ACK/NAK); RM-IP500 panel slot
   table read; Sony-format CSV import/export.</li>
+<li><span class="tag">Login</span> &mdash; per-model defaults (SRG-X400 admin/admin123,
+  BRC-AM7 admin/Admin123); when a camera rejects them the app asks for its login
+  and remembers it for that IP.</li>
 <li><span class="tag">Log</span> &mdash; commands, replies and errors at the bottom
   of the main window.</li>
 </ul>
@@ -161,12 +168,11 @@ class ScanWorker(QThread):
     prog = Signal(int, int)
     step = Signal(str)
 
-    def __init__(self, mode, cidr, user, password, known=()):
+    def __init__(self, mode, cidr, creds_for, known=()):
         super().__init__()
         self.mode = mode
         self.cidr = cidr
-        self.user = user
-        self.password = password
+        self.creds_for = creds_for or (lambda ip: None)
         self.known = list(known)
         self._stop = False
 
@@ -203,7 +209,7 @@ class ScanWorker(QThread):
             with ThreadPoolExecutor(max_workers=1) as uex:
                 fut_udp = self._start_udp(uex)
                 out = disc.probe_many(
-                    targets, self.user, self.password,
+                    targets, creds_for=self.creds_for,
                     progress=lambda d, t: (self.prog.emit(12 + 88 * d // max(1, t), 100),
                                            self.step.emit(f"Scan: {d}/{t}...")))
                 out = disc.merge_udp(out, self._udp_result(fut_udp))
@@ -211,7 +217,7 @@ class ScanWorker(QThread):
             self.step.emit("Scan: UDP 52380...")
             with ThreadPoolExecutor(max_workers=1) as uex:
                 fut_udp = self._start_udp(uex)
-                out = disc.scan_subnet(self.cidr, self.user, self.password,
+                out = disc.scan_subnet(self.cidr, creds_for=self.creds_for,
                                        progress=lambda d, t: self.prog.emit(d, t),
                                        stop_flag=lambda: self._stop)
                 out = disc.merge_udp(out, self._udp_result(fut_udp))
@@ -246,8 +252,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("RM IP++")
         self.resize(1360, 820)
         self.config = cfg.load()
-        self.user = self.config.get("user", DEFAULT_USER)
-        self.password = self.config.get("password", DEFAULT_PASSWORD)
+        self._cred_skipped: set[str] = set()
+        self._cred_prompt_active = False
         self.cams: list[dict] = []
         self.worker: ScanWorker | None = None
         self.edge = ev.EdgeTabs()
@@ -317,17 +323,6 @@ class MainWindow(QMainWindow):
         ar1.addStretch(1)
         ar2 = QHBoxLayout()
         adv_lay.addLayout(ar2)
-        ar2.addWidget(QLabel("Login:"))
-        self.e_user = QLineEdit(self.user)
-        self.e_user.setMaximumWidth(110)
-        self.e_user.setToolTip("Camera login (default: admin).")
-        ar2.addWidget(self.e_user)
-        ar2.addWidget(QLabel("Password:"))
-        self.e_pass = QLineEdit(self.password)
-        self.e_pass.setEchoMode(QLineEdit.Password)
-        self.e_pass.setMaximumWidth(130)
-        self.e_pass.setToolTip("Camera password (default: admin).")
-        ar2.addWidget(self.e_pass)
         self.btn_diag = QPushButton("Check connection")
         self.btn_diag.setToolTip("Ping and test HTTP/VISCA ports on the selected camera.")
         self.btn_diag.clicked.connect(self.on_diag)
@@ -526,16 +521,13 @@ class MainWindow(QMainWindow):
         # sprzatanie w tle - zamkniecie nigdy nie wisi na UAC
         import threading
         threading.Thread(target=nm.cleanup_all, daemon=True).start()
-        self.config.update({"user": self.e_user.text(), "password": self.e_pass.text(),
-                            "scan_cidr": self.e_cidr.text()})
+        self.config.update({"scan_cidr": self.e_cidr.text()})
         cfg.save(self.config)
         super().closeEvent(ev)
 
     def on_bridge(self):
         """Automat: dla kazdej widocznej (ARP/SSDP/znanej) lecz nieosiagalnej kamery
         dobuduj most na fizycznym Ethernecie. Bez wyboru karty."""
-        self.user = self.e_user.text().strip() or DEFAULT_USER
-        self.password = self.e_pass.text()
         cands = list(self.config.get("known_ips", []))
         try:
             cands += [h["ip"] for h in bridge.arp_candidates(None)]
@@ -553,8 +545,6 @@ class MainWindow(QMainWindow):
         self.start_scan("fast")
 
     def start_scan(self, mode):
-        self.user = self.e_user.text().strip() or DEFAULT_USER
-        self.password = self.e_pass.text()
         # nigdy dwa skany naraz (stary worker porywal sygnaly + crash przy GC)
         self._scan_gen = getattr(self, "_scan_gen", 0) + 1
         my_gen = self._scan_gen
@@ -576,7 +566,7 @@ class MainWindow(QMainWindow):
         self.btn_fast.setEnabled(False)
         self.lbl.setText("Scanning...")
         self.log_line(f"Scan {mode} (cidr={self.e_cidr.text()}).")
-        self.worker = ScanWorker(mode, self.e_cidr.text().strip(), self.user, self.password,
+        self.worker = ScanWorker(mode, self.e_cidr.text().strip(), self.creds_for,
                                  known=self.config.get("known_ips", []))
         self.worker.done.connect(lambda found, g=my_gen: self.on_scan_done(found, g))
         self.worker.prog.connect(lambda d, t: (self.prog.setMaximum(t), self.prog.setValue(d)))
@@ -651,6 +641,9 @@ class MainWindow(QMainWindow):
             cfg.save(self.config)
         except Exception:
             pass
+        if announce:
+            # cameras that rejected every default login: ask for credentials
+            QTimer.singleShot(150, self.prompt_missing_creds)
 
     def eventFilter(self, obj, ev):
         if obj is self.cam_table.viewport() and ev.type() == QEvent.Type.Resize:
@@ -681,6 +674,66 @@ class MainWindow(QMainWindow):
             self.log_line("Demo camera added (simulated, no hardware).")
         self.on_scan_done(self.cams, announce=False)
         self.add_ctrl_tab(DEMO_IP)
+
+    def creds_for(self, ip: str):
+        """Credential pairs to try for a camera (saved -> defaults)."""
+        return credman.candidates(self.config, ip)
+
+    def ask_credentials(self, ip: str, error: str = ""):
+        """Prompt for login/password until the camera accepts or the user skips.
+
+        Returns the fresh probe result (dict) on success, None when skipped.
+        """
+        if ip == DEMO_IP:
+            return None
+        cands = self.creds_for(ip)
+        user = (cands[0][0] if cands else "admin") or "admin"
+        while True:
+            dlg = CredentialsDialog(self, ip=ip, user=user, error=error)
+            if dlg.exec() != QDialog.Accepted:
+                return None
+            u, p = dlg.values()
+            if not u:
+                error = "Login cannot be empty."
+                continue
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                hit = disc.probe_ip(ip, creds_list=[(u, p)])
+            finally:
+                QApplication.restoreOverrideCursor()
+            if hit and not hit.get("auth_failed"):
+                credman.save_credentials(self.config, ip, u, p)
+                cfg.save(self.config)
+                self.log_line(f"Login accepted for {ip}.")
+                return hit
+            error = ("Login or password is incorrect."
+                     if hit and hit.get("auth_failed") else "The camera did not respond.")
+            user = u
+
+    def prompt_missing_creds(self):
+        """Ask for credentials for cameras that rejected all default logins."""
+        if self._cred_prompt_active:
+            return
+        pending = [c["ip"] for c in self.cams
+                   if c.get("auth_failed") and c["ip"] not in self._cred_skipped]
+        if not pending:
+            return
+        self._cred_prompt_active = True
+        try:
+            for ip in pending:
+                if ip in self._cred_skipped:
+                    continue
+                hit = self.ask_credentials(ip)
+                if hit is None:
+                    self._cred_skipped.add(ip)
+                    self.log_line(f"Login skipped for {ip}.")
+                    continue
+                self.cams = [hit if c["ip"] == ip else c for c in self.cams]
+                self.on_scan_done(self.cams, announce=False)
+                if ip in (self.config.get("open_tabs") or []):
+                    self.add_ctrl_tab(ip)
+        finally:
+            self._cred_prompt_active = False
 
     def selected_ip(self):
         r = self.cam_table.currentRow()
@@ -744,21 +797,28 @@ class MainWindow(QMainWindow):
         self.log_line(f"Probing {ip}...")
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            hit = disc.probe_ip(ip, self.e_user.text().strip() or DEFAULT_USER, self.e_pass.text())
+            hit = disc.probe_ip(ip, creds_list=self.creds_for(ip))
         finally:
             QApplication.restoreOverrideCursor()
         if not hit:
             okm, msg = nm.ensure_reachable(ip)
             self.log_line(f"Bridge for {ip}: {msg}")
             if okm:
-                hit = disc.probe_ip(ip, self.e_user.text().strip() or DEFAULT_USER, self.e_pass.text())
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    hit = disc.probe_ip(ip, creds_list=self.creds_for(ip))
+                finally:
+                    QApplication.restoreOverrideCursor()
+        if hit and hit.get("auth_failed"):
+            hit = self.ask_credentials(ip)
         if hit:
             if all(c["ip"] != hit["ip"] for c in self.cams):
                 self.cams.append(hit)
             self.on_scan_done(self.cams)
             self.log_line(f"Added {hit['ip']}.")
         else:
-            QMessageBox.warning(self, "Add IP", f"{ip} does not respond (HTTP/VISCA).")
+            QMessageBox.warning(self, "Add IP",
+                                f"{ip}: no response or login was cancelled.")
 
     def open_all_tabs(self):
         for c in self.cams:
@@ -799,9 +859,23 @@ class MainWindow(QMainWindow):
             return
         port = next((c.get("http_port", 80) for c in self.cams if c["ip"] == ip), 80)
         http = bool(next((c.get("http") for c in self.cams if c["ip"] == ip), False))
+        cam = next((x for x in self.cams if x["ip"] == ip), {}) or {}
+        if cam.get("auth_failed") and ip != DEMO_IP:
+            hit = self.ask_credentials(ip)
+            if hit is None:
+                return
+            cam = hit
+            self.cams = [hit if x["ip"] == ip else x for x in self.cams]
+            self.on_scan_done(self.cams, announce=False)
+            port = hit.get("http_port", port)
+            http = bool(hit.get("http"))
+        user = str(cam.get("user") or "")
+        password = str(cam.get("password") or "")
+        if not user:
+            cands = self.creds_for(ip)
+            user, password = cands[0] if cands else ("admin", "admin123")
         demo_api = DemoCameraAPI(ip) if ip == DEMO_IP else None
-        tab = CameraTab(ip, self.e_user.text().strip() or DEFAULT_USER,
-                        self.e_pass.text(), http_port=port, log=self.log_line,
+        tab = CameraTab(ip, user, password, http_port=port, log=self.log_line,
                         frames=self.config.get("frames", {}).get(ip),
                         save_frames=lambda: self.save_frames(ip),
                         reachable=http or demo_api is not None, api=demo_api)
@@ -854,11 +928,19 @@ class MainWindow(QMainWindow):
                 # kamera nie odpowiada (inna siec) - zakladka zamulalaby okno
                 self.log_line(f"Skipping tab {ip} (camera not responding).")
                 continue
+            cam = next((c for c in self.cams if c["ip"] == ip), {}) or {}
+            if cam.get("auth_failed"):
+                self.log_line(f"Skipping tab {ip} (login required).")
+                continue
             try:
                 port = next((c.get("http_port", 80) for c in self.cams if c["ip"] == ip), 80)
                 http = bool(next((c.get("http") for c in self.cams if c["ip"] == ip), False))
-                tab = CameraTab(ip, self.e_user.text().strip() or DEFAULT_USER,
-                                self.e_pass.text(), http_port=port, log=self.log_line,
+                user = str(cam.get("user") or "")
+                password = str(cam.get("password") or "")
+                if not user:
+                    cands = self.creds_for(ip)
+                    user, password = cands[0] if cands else ("admin", "admin123")
+                tab = CameraTab(ip, user, password, http_port=port, log=self.log_line,
                                 frames=self.config.get("frames", {}).get(ip),
                                 save_frames=lambda ip=ip: self.save_frames(ip),
                                 reachable=http)
@@ -1072,8 +1154,9 @@ def app_icon():
     """
     base = getattr(sys, "_MEIPASS", None)
     if base:
-        candidates = [os.path.join(base, "assets", "icon.svg"),
-                      os.path.join(base, "assets", "icon.ico")]
+        # frozen: prefer the multi-size ICO (Windows native rendering)
+        candidates = [os.path.join(base, "assets", "icon.ico"),
+                      os.path.join(base, "assets", "icon.svg")]
     else:
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         candidates = [os.path.join(root, "assets", "icon.svg"),
@@ -1087,13 +1170,54 @@ def app_icon():
 
 
 def set_windows_app_id():
-    """Windows: wlasny AppUserModelID, zeby taskbar bral ikone z okna (nie z pythona)."""
+    """Windows: AppUserModelID + rejestracja ikony dla taskbara (HKCU).
+
+    Samo SetCurrentProcessExplicitAppUserModelID nie wystarcza na Windows 11 -
+    shell szuka ikony dla AUMID w skrocie/klasie. Wpis AppUserModelId z IconUri
+    (tak robi Chrome) daje taskbarowi jednoznaczne zrodlo ikony.
+    """
     if os.name != "nt":
         return
+    aumid = "wertos97.RMIPPlusPlus.App"
     try:
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "wertos97.RMIPPlusPlus")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(aumid)
+    except Exception:
+        pass
+    try:
+        import shutil
+        import tempfile
+        import winreg
+        exe = sys.executable if getattr(sys, "frozen", False) else None
+        if exe and os.path.exists(exe):
+            # stable icon file (shell reads .ico more reliably than an exe in onefile)
+            icon_uri = exe
+            src = os.path.join(getattr(sys, "_MEIPASS", "") or "", "assets", "icon.ico")
+            if os.path.exists(src):
+                dst_dir = os.path.join(
+                    os.environ.get("LOCALAPPDATA") or tempfile.gettempdir(), "RMIP++")
+                os.makedirs(dst_dir, exist_ok=True)
+                dst = os.path.join(dst_dir, "icon.ico")
+                try:
+                    shutil.copyfile(src, dst)
+                    icon_uri = dst
+                except Exception:
+                    icon_uri = exe
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                                   "Software\\Classes\\AppUserModelId\\" + aumid)
+            winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, "RM IP++")
+            winreg.SetValueEx(key, "IconUri", 0, winreg.REG_SZ, icon_uri)
+            winreg.CloseKey(key)
+            # Start Menu shortcut carries the AUMID -> taskbar icon on Win11
+            try:
+                lnk_dir = os.path.join(os.environ.get("APPDATA", ""),
+                                       "Microsoft", "Windows", "Start Menu", "Programs")
+                ensure_shortcut(os.path.join(lnk_dir, "RM IP++.lnk"),
+                                exe, icon_uri, aumid)
+                # tell the shell the registration changed (icon refresh)
+                ctypes.windll.shell32.SHChangeNotify(0x08000000, 0x0000, None, None)
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -1109,5 +1233,6 @@ def run():
     apply_theme(app)
     app.setWindowIcon(app_icon())
     w = MainWindow()
+    w.setWindowIcon(app_icon())
     w.showMaximized()
     sys.exit(app.exec())

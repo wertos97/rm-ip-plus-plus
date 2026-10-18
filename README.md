@@ -8,11 +8,15 @@ image (exposure/WB) and a Wi-Fi + Ethernet network bridge. No IP setup required.
 1. Run `RMIPpp_0.1_win64.exe` (single file - no unpacking, no Python needed).
    Windows SmartScreen may warn about an unsigned app: **More info -> Run anyway**.
 2. The app scans the network on start (ARP, SSDP, UDP 52380). Cameras appear in
-   the list with model and status. If your cameras use a different login, open
-   **Advanced** and change **Login / Password** (default: `admin` / `admin`).
+   the list with model and status. Logins are automatic: SRG-X400 defaults to
+   `admin` / `admin123`, BRC-AM7 to `admin` / `Admin123`. If none is accepted,
+   the app asks for the login and password of that camera and remembers them.
 3. Double-click a camera (or use **Control selected**) to open its control tab.
 
 Notes:
+- The exe registers a Start Menu shortcut **RM IP++** on first run; Windows 11
+  uses it to show the correct taskbar icon (AppUserModelID). Keep the exe in a
+  fixed location - the shortcut is refreshed automatically when the path changes.
 - **No cameras?** After a scan with no results, the device list shows an
   **Add demo camera** button: a simulated camera (no network, no hardware) so
   you can explore every tab, PTZ, presets, shots and the image panel safely.
@@ -108,7 +112,7 @@ Without any hardware you can also just run the app and click **Add demo camera**
 
 - SRG-X400: ICMP is often blocked (ping fails, HTTP works).
 - `SlowPanTiltMode` is accepted (204) but has no effect on this firmware - not used.
-- Config (with the camera password) is kept in `%APPDATA%\RMIP++\config.json`,
+- Config (with the camera passwords) is kept in `%APPDATA%\RMIP++\config.json`,
   never in the repo.
 
 ## Files

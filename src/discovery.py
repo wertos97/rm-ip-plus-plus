@@ -70,8 +70,12 @@ def merge_udp(found: list[dict], udp_hits: list[dict]) -> list[dict]:
 
 
 def probe_ip(ip: str, user: str = "admin", password: str = "admin",
-             cgi_timeout: float = 2.5) -> dict | None:
-    """Szybki probe: TCP rownolegle krotko, CGI z krotszym timeoutem (skan nie wiesza sie)."""
+             cgi_timeout: float = 2.5, creds_list=None) -> dict | None:
+    """Szybki probe: TCP rownolegle krotko, CGI z krotszym timeoutem (skan nie wiesza sie).
+
+    creds_list: optional list of (user, password) to try in order (per-camera
+    defaults/saved credentials). Falls back to the user/password arguments.
+    """
     http_port = 0
     for p in (80, 8080):
         if tcp_open(ip, p, 0.5):
@@ -83,15 +87,30 @@ def probe_ip(ip: str, user: str = "admin", password: str = "admin",
     info: dict = {"ip": ip, "http": bool(http_port), "http_port": http_port,
                   "visca_52381": visca, "model": "?"}
     if http_port:
-        cam = SonyCamera(ip, user, password, http_port=http_port)
-        ok, net = cam.get_network(timeout=cgi_timeout)
-        if ok and isinstance(net, dict):
+        attempts = list(creds_list) if creds_list else [(user, password)]
+        net: dict | str | None = None
+        used: tuple[str, str] | None = None
+        auth_failed = False
+        for (u, p) in attempts:
+            cam = SonyCamera(ip, u, p, http_port=http_port)
+            ok, data = cam.get_network(timeout=cgi_timeout)
+            if ok and isinstance(data, dict):
+                net = data
+                used = (u, p)
+                break
+            net = data
+            if isinstance(data, str) and "401" in data:
+                auth_failed = True
+                continue
+            break  # timeout/HTTP error - trying more passwords will not help
+        if used is not None and isinstance(net, dict):
             model = net.get("ModelName") or net.get("CameraName") or "?"
             cam_name = net.get("CameraName", "")
             if model != "?" and cam_name and cam_name not in model:
                 model = f"{model} ({cam_name})"
             info["model"] = model
             info["network"] = net
+            info["user"], info["password"] = used
         else:
             # Sony API nie potwierdzilo kamery. Zanim uznamy urzadzenie za kamere,
             # szukamy sladow Sony/kamery w tytule strony i naglowkach HTTP - inaczej
@@ -119,7 +138,10 @@ def probe_ip(ip: str, user: str = "admin", password: str = "admin",
                 info["note"] = "HTTP did not confirm the model - check the camera HTTP port"
             else:
                 return None  # to nie kamera - nie zasmiecaj listy urzadzen
-            if isinstance(net, str) and net and not info.get("note"):
+            if auth_failed:
+                info["auth_failed"] = True
+                info["note"] = "Login required - open the camera to enter credentials."
+            elif isinstance(net, str) and net and not info.get("note"):
                 info["note"] = str(net)[:150]
     elif visca:
         info["note"] = "VISCA:52381 open, HTTP closed (check the camera HTTP port)"
@@ -128,14 +150,15 @@ def probe_ip(ip: str, user: str = "admin", password: str = "admin",
 
 def probe_many(ips: list[str], user="admin", password="admin",
                max_workers: int = 16, cgi_timeout: float = 2.5,
-               progress=None) -> list[dict]:
+               progress=None, creds_for=None) -> list[dict]:
     """Rownolegly probe listy IP - calosc w pare sekund, nie wiesza UI."""
     targets = list(dict.fromkeys(ips))
     total = len(targets)
     found = []
     done_n = [0]
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs = {ex.submit(probe_ip, ip, user, password, cgi_timeout): ip for ip in targets}
+        futs = {ex.submit(probe_ip, ip, user, password, cgi_timeout,
+                          creds_for(ip) if creds_for else None): ip for ip in targets}
         for f in as_completed(futs):
             try:
                 hit = f.result()
@@ -152,10 +175,11 @@ def probe_many(ips: list[str], user="admin", password="admin",
     return sorted(found, key=lambda d: d["ip"])
 
 
-def scan_defaults(user="admin", password="admin") -> list[dict]:
+def scan_defaults(user="admin", password="admin", creds_for=None) -> list[dict]:
     found = []
     with ThreadPoolExecutor(max_workers=8) as ex:
-        futs = {ex.submit(probe_ip, ip, user, password): ip for ip in LIKELY_DEFAULTS}
+        futs = {ex.submit(probe_ip, ip, user, password, 2.5,
+                          creds_for(ip) if creds_for else None): ip for ip in LIKELY_DEFAULTS}
         for f in as_completed(futs):
             hit = f.result()
             if hit:
@@ -164,7 +188,7 @@ def scan_defaults(user="admin", password="admin") -> list[dict]:
 
 
 def scan_subnet(cidr: str, user="admin", password="admin", max_workers: int = 64,
-                progress=None, stop_flag=None) -> list[dict]:
+                progress=None, stop_flag=None, creds_for=None) -> list[dict]:
     """Skan z progressem (progress(done,total)) i przerwaniem (stop_flag()->bool)."""
     net = ipaddress.ip_network(cidr, strict=False)
     ips = [str(h) for h in net.hosts()][:512]
@@ -172,7 +196,8 @@ def scan_subnet(cidr: str, user="admin", password="admin", max_workers: int = 64
     found: list[dict] = []
     done = 0
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs = {ex.submit(probe_ip, ip, user, password): ip for ip in ips}
+        futs = {ex.submit(probe_ip, ip, user, password, 2.5,
+                          creds_for(ip) if creds_for else None): ip for ip in ips}
         for f in as_completed(futs):
             if stop_flag and stop_flag():
                 for ff in futs:
