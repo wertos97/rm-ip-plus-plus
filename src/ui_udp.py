@@ -52,7 +52,7 @@ class WriteNetDialog(QDialog):
 
     def __init__(self, parent=None, defaults: dict | None = None, old_ip: str = ""):
         super().__init__(parent)
-        self.setWindowTitle("Sieć kamery — broadcast UDP 52380")
+        self.setWindowTitle("Sieć kamery")
         self.setMinimumWidth(560)
         self.old_ip = old_ip or ""
         self.worker: WriteWorker | None = None
@@ -61,14 +61,6 @@ class WriteNetDialog(QDialog):
         v = QVBoxLayout(self)
         v.setContentsMargins(16, 14, 16, 12)
         v.setSpacing(10)
-        info = QLabel(
-            "Wysyła ustawienia sieci do kamery o podanym MAC (protokół Sony, "
-            "broadcast UDP 52380). Działa też, gdy kamera ma adres z innej "
-            "podsieci niż komputer — bez zmiany IP karty.")
-        info.setWordWrap(True)
-        info.setStyleSheet("color:#9aa0a6;")
-        v.addWidget(info)
-
         g = QGridLayout()
         g.setHorizontalSpacing(12)
         g.setVerticalSpacing(8)
@@ -81,16 +73,15 @@ class WriteNetDialog(QDialog):
         self.e_gw = QLineEdit(d.get("gateway", ""))
         self.e_name = QLineEdit(d.get("name", ""))
         rows = (
-            ("MAC kamery:", self.e_mac, "Z tego MAC kamera rozpozna, że rozkaz jest dla niej."),
-            ("Nowy adres IP:", self.e_ip, "Docelowy adres kamery."),
-            ("Maska podsieci:", self.e_mask, "Np. 255.255.255.0"),
-            ("Brama:", self.e_gw, "Może być pusta."),
-            ("Nazwa kamery:", self.e_name, "Krótka nazwa, maks. 16 znaków ASCII, np. CAM2."),
+            ("MAC kamery:", self.e_mac),
+            ("Adres IP:", self.e_ip),
+            ("Maska podsieci:", self.e_mask),
+            ("Brama:", self.e_gw),
+            ("Nazwa kamery:", self.e_name),
         )
-        for i, (lbl, wdg, tip) in enumerate(rows):
+        for i, (lbl, wdg) in enumerate(rows):
             g.addWidget(QLabel(lbl), i, 0)
             g.addWidget(wdg, i, 1)
-            wdg.setToolTip(tip)
         if old_ip:
             self.e_ip.setPlaceholderText(old_ip)
 
@@ -100,10 +91,10 @@ class WriteNetDialog(QDialog):
         self.warn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         if d.get("writable") is False:
             self.warn.setText("Uwaga: kamera zgłosiła ostatnio WRITE:off — zapis może zostać "
-                              "odrzucony (blokada zmiany ustawień w kamerze).")
+                              "odrzucony.")
         elif d.get("writable") is None:
-            self.warn.setText("Uwaga: brak danych WRITE z UDP (skan nie widział kamery przez UDP) "
-                              "— nie wiadomo, czy zapis jest odblokowany.")
+            self.warn.setText("Uwaga: brak danych WRITE — nie wiadomo, czy zapis jest "
+                              "odblokowany.")
         self.warn.setVisible(bool(self.warn.text()))
         v.addWidget(self.warn)
 
@@ -114,11 +105,11 @@ class WriteNetDialog(QDialog):
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumHeight(84)
-        self.log.setPlaceholderText("Surowe odpowiedzi ACK/NAK...")
+        self.log.setPlaceholderText("Odpowiedzi ACK/NAK...")
         v.addWidget(self.log)
 
         row = QHBoxLayout()
-        self.btn_send = QPushButton("Wyślij ustawienia (UDP)")
+        self.btn_send = QPushButton("Wyślij ustawienia")
         self.btn_send.setProperty("kind", "primary")
         self.btn_send.setMinimumHeight(30)
         self.btn_send.clicked.connect(self.on_send)
@@ -149,15 +140,12 @@ class WriteNetDialog(QDialog):
             QMessageBox.warning(self, "Brama", f"{gw!r} nie jest poprawną bramą.")
             return
         if not name or len(name) > 16 or any(not (0x20 <= ord(ch) <= 0x7E) for ch in name):
-            QMessageBox.warning(self, "Nazwa", "Nazwa: 1-16 drukowalnych znaków ASCII "
-                                               "(bez polskich znaków), np. CAM2.")
+            QMessageBox.warning(self, "Nazwa", "Nazwa: 1-16 znaków ASCII (np. CAM2).")
             return
         warn = (f"Kamera {mac} zmieni ustawienia sieciowe na:\n\n"
                 f"    IP:     {ip}\n    Maska:  {mask}\n    Brama:  {gw or '(pusta)'}\n"
                 f"    Nazwa:  {name}\n\n"
-                "Kamera straci stary adres od razu po potwierdzeniu (ACK). "
-                "Jeśli nowy adres jest spoza podsieci komputera, do dalszej pracy "
-                "potrzebny będzie most (Zaawansowane ▸ Dobuduj most).\n\nKontynuować?")
+                "Kamera straci stary adres po potwierdzeniu (ACK).\n\nKontynuować?")
         ans = QMessageBox.warning(self, "Zmiana adresu kamery", warn,
                                   QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if ans != QMessageBox.Yes:
@@ -176,28 +164,25 @@ class WriteNetDialog(QDialog):
         if res.get("ok"):
             who = res.get("reply_mac") or res.get("target_mac") or res.get("mac") or "?"
             self.status.setStyleSheet("color:#8fce8f;")
-            self.status.setText(f"ACK — kamera potwierdziła zmianę (MAC {who}). "
-                                "Zaktualizuję listę urządzeń nowym adresem.")
+            self.status.setText(f"ACK — kamera potwierdziła zmianę (MAC {who}).")
             self.applied.emit({"old_ip": self.old_ip, "ip": res.get("ip", ""),
                                "mac": who})
         elif kind == "NAK":
             self.status.setStyleSheet("color:#ff7b72;")
-            self.status.setText("NAK — kamera odrzuciła zmianę (blokada WRITE:off, "
-                                "złe pole albo MAC nie wskazuje tej kamery).")
+            self.status.setText("NAK — kamera odrzuciła zmianę.")
         elif kind == "error":
             self.status.setStyleSheet("color:#ff7b72;")
             self.status.setText(f"Błąd: {res.get('error')}")
         else:
             self.status.setStyleSheet("color:#ffb14e;")
-            self.status.setText("Brak odpowiedzi (timeout). Kamera może nie mieć WRITE:on, "
-                                "być wyłączona albo MAC się nie zgadza. Możesz spróbować ponownie.")
+            self.status.setText("Brak odpowiedzi (timeout).")
         replies = res.get("replies") or []
         for r in replies:
             self.log.appendPlainText(
                 f"{r.get('src_ip', '?'):>15}  {r.get('kind', '?'):<4} "
                 f"mac={r.get('mac') or '-'}  {_raw_text(r.get('raw') or b'')}")
         if not replies:
-            self.log.appendPlainText("(0 odpowiedzi w oknie nasłuchu)")
+            self.log.appendPlainText("(0 odpowiedzi)")
 
 
 class CamtableWorker(QThread):
@@ -216,7 +201,7 @@ class CamtableDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Tabela kamer panelu RM-IP — UDP 52380")
+        self.setWindowTitle("Tabela kamer panelu")
         self.resize(780, 560)
         self.worker: CamtableWorker | None = None
         self._slots: dict[int, dict] = {}
@@ -225,7 +210,7 @@ class CamtableDialog(QDialog):
         v = QVBoxLayout(self)
         v.setContentsMargins(16, 14, 16, 12)
         v.setSpacing(8)
-        self.head = QLabel("Pytam panel o tabelę kamer (strony 1-4)...")
+        self.head = QLabel("Pytam panel o tabelę kamer...")
         self.head.setWordWrap(True)
         self.head.setStyleSheet("color:#9aa0a6;")
         v.addWidget(self.head)
@@ -255,7 +240,7 @@ class CamtableDialog(QDialog):
         self.raw = QPlainTextEdit()
         self.raw.setReadOnly(True)
         self.raw.setMaximumHeight(96)
-        self.raw.setPlaceholderText("Surowe odpowiedzi panelu...")
+        self.raw.setPlaceholderText("Odpowiedzi panelu...")
         v.addWidget(self.raw)
 
         row = QHBoxLayout()
@@ -263,13 +248,10 @@ class CamtableDialog(QDialog):
         self.btn_refresh.setProperty("kind", "primary")
         self.btn_refresh.clicked.connect(self.refresh)
         row.addWidget(self.btn_refresh)
-        self.btn_export = QPushButton("Eksport CSV (Sony)…")
-        self.btn_export.setToolTip("Zapisuje tabelę w formacie RM-IP Setup Tool "
-                                   "(112 wierszy GroupG-C, pole maski 255.255.255.0).")
+        self.btn_export = QPushButton("Eksport CSV…")
         self.btn_export.clicked.connect(self.export_csv)
         row.addWidget(self.btn_export)
         self.btn_import = QPushButton("Wczytaj CSV (podgląd)…")
-        self.btn_import.setToolTip("Pokazuje tabelę z pliku CSV Sony — bez zapisu do panelu.")
         self.btn_import.clicked.connect(self.import_csv)
         row.addWidget(self.btn_import)
         row.addStretch(1)
@@ -286,7 +268,7 @@ class CamtableDialog(QDialog):
             return
         self._file_mode = False
         self.btn_refresh.setEnabled(False)
-        self.head.setText("Pytam panel o tabelę kamer (strony 1-4, do 5 s)...")
+        self.head.setText("Pytam panel o tabelę kamer...")
         self.worker = CamtableWorker(self)
         self.worker.done.connect(self.on_pages)
         self.worker.start()
@@ -314,16 +296,14 @@ class CamtableDialog(QDialog):
         if not slots:
             self._slots = {}
             self.table.setRowCount(0)
-            self.head.setText("Brak odpowiedzi panelu (do 5 s). Czy panel RM-IP jest "
-                              "w sieci, włączony i w tym samym segmencie L2?")
+            self.head.setText("Brak odpowiedzi panelu.")
             return
         self._slots = slots
         self._fill(slots)
         filled = sum(1 for e in slots.values() if e.get("mac") or e.get("ip") or e.get("name"))
         panels = ", ".join(sorted({p.get("panel_mac") or p.get("src_ip") or "?"
                                    for p in pages}))
-        self.head.setText(f"Panel: {panels} · wpisy wypełnione: {filled} "
-                          f"(z {len(slots)} odebranych)")
+        self.head.setText(f"Panel: {panels} · wypełnione: {filled}")
 
     def _fill(self, slots: dict):
         rows = sorted(slots.items())
@@ -348,11 +328,10 @@ class CamtableDialog(QDialog):
     def export_csv(self):
         slots = self._slots
         if not slots:
-            QMessageBox.information(self, "CSV", "Najpierw odczytaj tabelę z panelu "
-                                                 "(albo wczytaj plik do podglądu).")
+            QMessageBox.information(self, "CSV", "Najpierw odczytaj tabelę z panelu.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Eksport tabeli (CSV Sony)", "rmip_table.csv", "CSV (*.csv);;Wszystkie pliki (*)")
+            self, "Eksport tabeli CSV", "rmip_table.csv", "CSV (*.csv);;Wszystkie pliki (*)")
         if not path:
             return
         try:
@@ -362,11 +341,11 @@ class CamtableDialog(QDialog):
             QMessageBox.warning(self, "CSV", f"Nie udało się zapisać: {e}")
             return
         self.raw.appendPlainText(f"[CSV] zapisano tabelę -> {path}")
-        QMessageBox.information(self, "CSV", f"Zapisano tabelę (format Sony):\n{path}")
+        QMessageBox.information(self, "CSV", f"Zapisano tabelę:\n{path}")
 
     def import_csv(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Wczytaj tabelę CSV (Sony)", "", "CSV (*.csv);;Wszystkie pliki (*)")
+            self, "Wczytaj tabelę CSV", "", "CSV (*.csv);;Wszystkie pliki (*)")
         if not path:
             return
         try:
@@ -390,4 +369,4 @@ class CamtableDialog(QDialog):
         self._fill(self._slots)
         filled = sum(1 for r in rows if r.get("mac") or r.get("ip") or r.get("name"))
         self.head.setText(f"Podgląd z pliku: {path} · wierszy: {len(rows)}, "
-                          f"wypełnionych: {filled} · (bez zapisu do panelu)")
+                          f"wypełnionych: {filled}")

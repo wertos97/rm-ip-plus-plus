@@ -11,11 +11,15 @@ from PySide6.QtWidgets import (
 )
 
 try:
-    from .cam_control import CameraAPI
-    from .human import IRIS_F, SHUTTER_50P, expcomp_db, fmt_deg, gain_db, pan_deg, tilt_deg, zoom_x
+    from .cam_control import AM7_STEP_SCALE, AM7_WB_MODES, CameraAPI, rel16, rel20
+    from .human import (IRIS_F, SHUTTER_50P, SHUTTER_50P_AM7, ae_level_ev, am7_iris_from_cam,
+                        am7_iris_label, am7_iris_to_cam, expcomp_db, fmt_deg, gain_db, gain_db_am7,
+                        pan_deg, pan_deg20, tilt_deg, tilt_deg20, zoom_x, zoom_x_max)
 except ImportError:
-    from cam_control import CameraAPI  # noqa: E402
-    from human import IRIS_F, SHUTTER_50P, expcomp_db, fmt_deg, gain_db, pan_deg, tilt_deg, zoom_x  # noqa: E402
+    from cam_control import AM7_STEP_SCALE, AM7_WB_MODES, CameraAPI, rel16, rel20  # noqa: E402
+    from human import (IRIS_F, SHUTTER_50P, SHUTTER_50P_AM7, ae_level_ev, am7_iris_from_cam,  # noqa: E402
+                       am7_iris_label, am7_iris_to_cam, expcomp_db, fmt_deg, gain_db, gain_db_am7,
+                       pan_deg, pan_deg20, tilt_deg, tilt_deg20, zoom_x, zoom_x_max)
 
 DIRS = [("up-left", "↖", 0, 0), ("up", "↑", 0, 1), ("up-right", "↗", 0, 2),
         ("left", "←", 1, 0), ("home", "⌂", 1, 1), ("right", "→", 1, 2),
@@ -239,6 +243,8 @@ class PresetPanel(QWidget):
         self.thumbs: dict[int, QPixmap] = {}
         self.page = 0
         self.mode = "recall"
+        self.max_num = 256      # BRC-AM7: 100 (PresetNum); SRG: 256
+        self._speed_on = True
         self._build()
         self.reload()
 
@@ -270,7 +276,7 @@ class PresetPanel(QWidget):
         self.btn_rename.clicked.connect(self.rename_slot)
         top.addWidget(self.btn_rename)
         self.btn_thumbs = QPushButton("Generuj miniaturki")
-        self.btn_thumbs.setToolTip("Przejedzie zdefiniowane presety i dopisze miniaturki (kamera bedzie sie ruszac!).")
+        self.btn_thumbs.setToolTip("Kamera bedzie sie ruszac.")
         self.btn_thumbs.clicked.connect(self.generate_thumbs)
         top.addWidget(self.btn_thumbs)
         nav = QHBoxLayout()
@@ -298,11 +304,22 @@ class PresetPanel(QWidget):
         self.btn_recall.setChecked(m == "recall")
         self.btn_save.setChecked(m == "save")
         base = self.page * 16
-        action = "przywolanie" if m == "recall" else "ZAPIS (nadpisze slot!)"
-        self.lb_page.setText(f"Sloty {base + 1}-{base + 16} · klik = {action}")
+        self.lb_page.setText(f"Sloty {base + 1}-{min(base + 16, self.max_num)}" + ("" if m == "recall" else " · nadpisze!"))
 
     def set_page(self, p):
-        self.page = max(0, min(15, p))
+        self.page = max(0, min((self.max_num - 1) // 16, p))
+        self.reload()
+
+    def set_max(self, n: int, speed: bool = True):
+        """BRC-AM7: 100 presetow i brak predkosci przy przywolaniu (ustawia ja kamera)."""
+        n = max(16, int(n))
+        if n == self.max_num and speed == self._speed_on:
+            return
+        self.max_num = n
+        self._speed_on = speed
+        self.sp_speed.setEnabled(speed)
+        self.sp_speed.setToolTip("" if speed else "BRC-AM7: predkosc ustawia sie w kamerze.")
+        self.page = max(0, min((self.max_num - 1) // 16, self.page))
         self.reload()
 
     def reload(self):
@@ -313,12 +330,14 @@ class PresetPanel(QWidget):
                 w.setParent(None)
                 w.deleteLater()
         base = self.page * 16
-        action = "przywolanie" if self.mode == "recall" else "ZAPIS (nadpisze slot!)"
-        self.lb_page.setText(f"Sloty {base + 1}-{base + 16} · klik = {action}")
+        self.lb_page.setText(f"Sloty {base + 1}-{min(base + 16, self.max_num)}" + ("" if self.mode == "recall" else " · nadpisze!"))
+        last = (self.max_num - 1) // 16
         self.btn_prev.setText(f"◀ {max(1, base - 15)}-{base}" if base else "◀")
-        self.btn_next.setText(f"{base + 17}-{base + 32} ▶" if base < 240 else "▶")
+        self.btn_next.setText(f"{base + 17}-{min(base + 32, self.max_num)} ▶" if self.page < last else "▶")
         for i in range(16):
             num = base + i + 1
+            if num > self.max_num:
+                continue
             name = self.names.get(num, "")
             tip = f"Preset {num}" + (f": {name}" if name else " (wolny)")
             card = SlotCard(num, name, self.thumbs.get(num), "wolny", tip)
@@ -329,7 +348,7 @@ class PresetPanel(QWidget):
             self.grid.setRowStretch(i, 1)
             self.grid.setColumnStretch(i, 1)
         self.load_thumbs([n for n in (base + i + 1 for i in range(16))
-                          if n in self.names and n not in self.thumbs])
+                          if n <= self.max_num and n in self.names and n not in self.thumbs])
 
     def _apply_selection(self):
         for i in range(self.grid.count()):
@@ -354,7 +373,7 @@ class PresetPanel(QWidget):
         self.reload()
 
     def generate_thumbs(self):
-        defined = sorted(self.names)
+        defined = sorted(n for n in self.names if n <= self.max_num)
         if not defined:
             QMessageBox.information(self, "Miniaturki", "Brak zdefiniowanych presetow.")
             return
@@ -537,12 +556,9 @@ class FramePanel(QWidget):
             b.clicked.connect(lambda _, mm=m: self.set_mode(mm))
             top.addWidget(b)
         self.btn_fclear = QPushButton("Wyczysc")
-        self.btn_fclear.setToolTip("Usuwa kadr z wybranego slotu.")
         self.btn_fclear.clicked.connect(self.clear_frame)
         top.addWidget(self.btn_fclear)
-        hint = QLabel("Kadr = sama pozycja PTZ (bez ekspozycji/WB).")
-        hint.setStyleSheet("color: gray;")
-        top.addWidget(hint, 1)
+        top.addStretch(1)
         self.grid = QGridLayout()
         self.grid.setContentsMargins(0, 2, 0, 0)
         self.grid.setSpacing(10)
@@ -566,7 +582,7 @@ class FramePanel(QWidget):
         for i in range(16):
             fr = self.frames[i]
             name = fr["name"] if fr else ""
-            tip = (f"PTZ {','.join(fr['ptzf'])} · klik = {self.mode}") if fr else \
+            tip = (f"PTZ {','.join(fr['ptzf'])}") if fr else \
                 f"Kadr {i + 1} pusty"
             card = SlotCard(i + 1, name, self.thumbs.get(i), "pusty", tip)
             card.set_selected(i == self.slot)
@@ -647,9 +663,29 @@ class FramePanel(QWidget):
         self.reload()
 
 
+class _StatusPoll(QThread):
+    """Odczyt statusu PTZF poza watkiem GUI.
+
+    Kiedy kamera nie odpowiada (np. inna siec), requests czeka nawet 8 s -
+    na watku GUI to zamulenie calego okna, wiec polling idzie w tle."""
+    done = Signal(bool, dict)
+
+    def __init__(self, api, timeout: float = 2.0, parent=None):
+        super().__init__(parent)
+        self.api = api
+        self.timeout = timeout
+
+    def run(self):
+        try:
+            ok, pt = self.api.status(timeout=self.timeout)
+        except Exception:
+            ok, pt = False, {}
+        self.done.emit(bool(ok), pt if isinstance(pt, dict) else {})
+
+
 class CameraTab(QWidget):
     def __init__(self, ip: str, user: str, password: str, http_port: int = 80, log=None,
-                 frames=None, save_frames=None):
+                 frames=None, save_frames=None, reachable: bool = True):
         super().__init__()
         self.api = CameraAPI(ip, user, password, http_port)
         self.log = log or (lambda t: None)
@@ -690,7 +726,13 @@ class CameraTab(QWidget):
             b.clicked.connect(lambda _, nn=n: self.quick_frame(nn))
             bottom.addWidget(b)
             self.quick_btns.append(b)
-        self.refresh_all()
+        # pelny odczyt tylko gdy kamera odpowiada - inaczej kazde zapytanie
+        # wisialoby po 8 s na watku GUI; status dociagnie polling w tle
+        self._need_full_refresh = not reachable
+        if reachable:
+            self.refresh_all()
+        self._poll: _StatusPoll | None = None
+        self._poll_fails = 0
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.poll_status)
         self.timer.start(2000)
@@ -751,7 +793,6 @@ class CameraTab(QWidget):
         self.rb_drive = QRadioButton("Jazda")
         self.rb_drive.setChecked(True)
         self.rb_step = QRadioButton("Krok")
-        self.rb_step.setToolTip("Tryb precyzji: klik strzalki = pojedynczy krok")
         mode_row.addWidget(self.rb_drive)
         mode_row.addWidget(self.rb_step)
         mode_row.addStretch(1)
@@ -840,13 +881,13 @@ class CameraTab(QWidget):
         fr.setSpacing(8)
         fl.addLayout(fr)
         for label, direction in (("Near", "near"), ("Far", "far")):
-            b = HoldButton(label, lambda d=direction: self.run(self.api.focus_move(d), f"Focus {d}"),
-                           lambda: self.run(self.api.stop("focus"), "Stop"))
+            b = HoldButton(label, lambda d=direction: self.focus_press(d),
+                           lambda: self.focus_release())
             b.setMinimumHeight(54)
             fr.addWidget(b)
         self.btn_af1 = QPushButton("OnePush AF")
         self.btn_af1.setMinimumHeight(54)
-        self.btn_af1.clicked.connect(lambda: self.run(self.api.focus_move("onepushaf"), "OnePushAF"))
+        self.btn_af1.clicked.connect(self.do_onepush_af)
         fl.addWidget(self.btn_af1)
         fr2 = QHBoxLayout()
         fr2.setSpacing(8)
@@ -859,7 +900,7 @@ class CameraTab(QWidget):
         self.btn_focus = QPushButton("Ustaw")
         self.btn_focus.setMaximumWidth(90)
         self.btn_focus.clicked.connect(lambda: self.run(
-            self.api.set_imaging(FocusMode=self.cb_focus.currentText()), "FocusMode"))
+            self.api.set_focus_mode(self.cb_focus.currentText()), "FocusMode"))
         fr2.addWidget(self.btn_focus)
 
         # ---- kolumna obraz: karty "Ekspozycja" i "Balans bieli" ----
@@ -912,7 +953,7 @@ class CameraTab(QWidget):
         wbrow.addWidget(self.btn_wb)
         self.btn_wb1 = QPushButton("OnePush WB")
         self.btn_wb1.setMinimumHeight(36)
-        self.btn_wb1.clicked.connect(lambda: self.run(self.api.wb_onepush(), "OnePushWB"))
+        self.btn_wb1.clicked.connect(self.do_onepush_wb)
         wbrow.addWidget(self.btn_wb1)
         self.btn_reload = QPushButton("Odczytaj z kamery")
         self.btn_reload.clicked.connect(self.refresh_all)
@@ -929,14 +970,40 @@ class CameraTab(QWidget):
         f.setBold(True)
         lb.setFont(f)
         sl._fmt = fmt
-        if fmt is None:
-            sl.valueChanged.connect(lambda v: lb.setText(str(v)))
-        else:
-            sl.valueChanged.connect(lambda v: lb.setText(f"{v} ({sl._fmt(v)})"))
+        sl._lb = lb
+        sl.valueChanged.connect(lambda v, s=sl: self._slider_refresh(s))
         row.addWidget(sl, 1)
         row.addWidget(lb)
         form.addRow(label, row)
+        self._slider_refresh(sl)
         return sl
+
+    def _slider_refresh(self, sl):
+        lb = getattr(sl, "_lb", None)
+        if lb is None:
+            return
+        v = sl.value()
+        fmt = getattr(sl, "_fmt", None)
+        lb.setText(str(v) if fmt is None else f"{v} ({fmt(v)})")
+
+    def _slider_cfg(self, sl, lo, hi, fmt=None):
+        """Zmiana zakresu/formatowania suwaka w locie (rozne jednostki SRG vs BRC-AM7)."""
+        sl.blockSignals(True)
+        sl.setRange(lo, hi)
+        sl._fmt = fmt
+        sl.blockSignals(False)
+        self._slider_refresh(sl)
+
+    @staticmethod
+    def _parse_range(raw, dlo: int, dhi: int) -> tuple[int, int]:
+        """'ExposureGainRange=6,45' -> (6, 45); brak/zle -> wartosci domyslne."""
+        try:
+            a, b = (int(x) for x in str(raw).split(",")[:2])
+            if a < b:
+                return a, b
+        except (ValueError, TypeError):
+            pass
+        return dlo, dhi
 
     # ---------- akcje ----------
     def pt_speed(self) -> int:
@@ -998,6 +1065,9 @@ class CameraTab(QWidget):
 
     def step_move(self, direction: str):
         step = int(self.sp_step.value())
+        fam = self.api.family
+        if fam == "am7":
+            step = int(round(step * AM7_STEP_SCALE))  # 20-bit, 1 jedn. = 0.001°
         dpan = dtilt = 0
         if "up" in direction:
             dtilt = step
@@ -1007,8 +1077,8 @@ class CameraTab(QWidget):
             dpan = -step
         if "right" in direction:
             dpan = step
-        self.run(self.api.relative_pt(f"{dpan & 0xFFFF:04x}", f"{dtilt & 0xFFFF:04x}",
-                                      max(1, self.pt_speed() or 5)),
+        fmt = rel20 if fam == "am7" else rel16
+        self.run(self.api.relative_pt(fmt(dpan), fmt(dtilt), max(1, self.pt_speed() or 5)),
                  f"Krok {direction} {step}")
 
     def zoom_hold(self, direction: str):
@@ -1017,7 +1087,57 @@ class CameraTab(QWidget):
     def zoom_stop(self):
         self.run(self.api.stop("zoom"), "Stop")
 
+    def focus_press(self, direction: str):
+        if self.api.family == "am7":
+            # AM7: brak ciaglego ruchu focus - krok co ~110 ms, dopoki trzymasz
+            self._focus_dir = direction
+            self.focus_step()
+            if not hasattr(self, "_focus_timer"):
+                self._focus_timer = QTimer(self)
+                self._focus_timer.setInterval(110)
+                self._focus_timer.timeout.connect(self.focus_step)
+            self._focus_timer.start()
+        else:
+            self.run(self.api.focus_move(direction), f"Focus {direction}")
+
+    def focus_step(self):
+        d = getattr(self, "_focus_dir", None)
+        if not d:
+            return
+        ok, msg = self.api.focus_step(d)
+        if not ok:
+            if hasattr(self, "_focus_timer"):
+                self._focus_timer.stop()
+            self.log(f"[{self.api.ip}] Focus krok: BLAD {msg[:100]}")
+
+    def focus_release(self):
+        if self.api.family == "am7":
+            self._focus_dir = None
+            if hasattr(self, "_focus_timer"):
+                self._focus_timer.stop()
+        else:
+            self.run(self.api.stop("focus"), "Stop")
+
+    def do_onepush_af(self):
+        if self.api.family == "am7":
+            self.run(self.api.one_push_af_press(), "OnePushAF")
+            QTimer.singleShot(250, lambda: self.api.one_push_af_release())
+        else:
+            self.run(self.api.focus_move("onepushaf"), "OnePushAF")
+
+    def do_onepush_wb(self):
+        if self.api.family == "am7":
+            self.run(self.api.wb_onepush(), "OnePushWB")
+            QTimer.singleShot(250, lambda: self.api.wb_onepush_release())
+        else:
+            self.run(self.api.wb_onepush(), "OnePushWB")
+
     def apply_exposure(self):
+        if self.api.family == "am7":
+            self.run(self.api.set_exposure_am7(
+                self.cb_exp.currentText(), am7_iris_to_cam(self.sl_iris.value()),
+                self.sl_gain.value(), self.sl_shut.value(), self.sl_comp.value()), "Ekspozycja")
+            return
         self.run(self.api.set_imaging(
             ExposureMode=self.cb_exp.currentText(),
             ExposureIris=self.sl_iris.value(), ExposureGain=self.sl_gain.value(),
@@ -1025,6 +1145,11 @@ class CameraTab(QWidget):
             ExposureCompensation=self.sl_comp.value()), "Ekspozycja")
 
     def apply_wb(self):
+        if self.api.family == "am7":
+            self.run(self.api.set_wb_am7(
+                self.cb_wb.currentText(), self.sl_cb.value(), self.sl_cr.value(),
+                self.sl_wboff.value()), "WB")
+            return
         self.run(self.api.set_imaging(
             WhiteBalanceMode=self.cb_wb.currentText(),
             WhiteBalanceCbGain=self.sl_cb.value(), WhiteBalanceCrGain=self.sl_cr.value(),
@@ -1045,9 +1170,17 @@ class CameraTab(QWidget):
             return f"<span style='color:#ffd9a0'>{t}</span>"
 
         if len(parts) >= 3:
-            txt = (f"{dim('Pan')} {val(fmt_deg(pan_deg(parts[0])))}&nbsp;&nbsp;"
-                   f"{dim('Tilt')} {val(fmt_deg(tilt_deg(parts[1])))}&nbsp;&nbsp;"
-                   f"{dim('Zoom')} {val(f'~{zoom_x(parts[2]):.1f}x')}"
+            if self.api.family == "am7":
+                pan_t, tilt_t, z_t = pan_deg20(parts[0]), tilt_deg20(parts[1]), zoom_x_max(parts[2], 25.0)
+                if z_t == z_t and z_t > 25.0:
+                    z_txt = "~25x+"
+                else:
+                    z_txt = f"~{z_t:.1f}x"
+            else:
+                pan_t, tilt_t, z_txt = pan_deg(parts[0]), tilt_deg(parts[1]), f"~{zoom_x(parts[2]):.1f}x"
+            txt = (f"{dim('Pan')} {val(fmt_deg(pan_t))}&nbsp;&nbsp;"
+                   f"{dim('Tilt')} {val(fmt_deg(tilt_t))}&nbsp;&nbsp;"
+                   f"{dim('Zoom')} {val(z_txt)}"
                    f"&nbsp;&nbsp;{dim('|')}&nbsp;&nbsp;{dim(st_txt)}")
         else:
             txt = f"{dim('PTZF')} {val(abspt)}&nbsp;&nbsp;{dim('|')}&nbsp;&nbsp;{dim(st_txt)}"
@@ -1056,7 +1189,7 @@ class CameraTab(QWidget):
     def quick_frame(self, num: int):
         fr = self.frames[num - 1] if 1 <= num <= len(self.frames) else None
         if not isinstance(fr, dict):
-            QMessageBox.information(self, "Kadr", f"Kadr {num} pusty - zapisz go w zakladce Kadry PTZ.")
+            QMessageBox.information(self, "Kadr", f"Kadr {num} pusty.")
             return
         p, t, z, f = fr["ptzf"]
         ok, msg = self.api.absolute_ptzf(p, t, z, f)
@@ -1078,26 +1211,71 @@ class CameraTab(QWidget):
         self._mark_quick()
 
     def refresh_all(self):
+        fam = self.api.family
         ok, pt = self.api.status()
-        if ok and isinstance(pt, dict):
+        pt = pt if (ok and isinstance(pt, dict)) else None
+        if pt:
             self.status.setText(self.status_text(pt))
         ok, im = self.api.imaging()
         if ok and isinstance(im, dict):
-            self._set_combo(self.cb_exp, im.get("ExposureMode", "auto"))
-            self._set_slider(self.sl_iris, im.get("ExposureIris"))
-            self._set_slider(self.sl_gain, im.get("ExposureGain"))
-            self._set_slider(self.sl_shut, im.get("ExposureExposureTime"))
-            self._set_slider(self.sl_comp, im.get("ExposureCompensation"))
-            self._set_combo(self.cb_wb, im.get("WhiteBalanceMode", "auto"))
-            self._set_slider(self.sl_cb, im.get("WhiteBalanceCbGain"))
-            self._set_slider(self.sl_cr, im.get("WhiteBalanceCrGain"))
-            self._set_slider(self.sl_wboff, im.get("WhiteBalanceOffset"))
-            self._set_combo(self.cb_focus, im.get("FocusMode", "auto"))
+            if fam == "am7":
+                self._apply_am7_imaging(im, pt)
+            else:
+                self._apply_srg_imaging(im)
         ok, names = self.api.preset_list()
         if ok:
             self.preset_names = names
             self.preset_panel.refresh_names(names)
+        self.preset_panel.set_max(100 if fam == "am7" else 256, speed=(fam != "am7"))
         self.refresh_quick()
+
+    def _apply_srg_imaging(self, im: dict):
+        self._set_combo(self.cb_exp, im.get("ExposureMode", "auto"))
+        self._set_slider(self.sl_iris, im.get("ExposureIris"))
+        self._set_slider(self.sl_gain, im.get("ExposureGain"))
+        self._set_slider(self.sl_shut, im.get("ExposureExposureTime"))
+        self._set_slider(self.sl_comp, im.get("ExposureCompensation"))
+        self._set_combo(self.cb_wb, im.get("WhiteBalanceMode", "auto"))
+        self._set_slider(self.sl_cb, im.get("WhiteBalanceCbGain"))
+        self._set_slider(self.sl_cr, im.get("WhiteBalanceCrGain"))
+        self._set_slider(self.sl_wboff, im.get("WhiteBalanceOffset"))
+        self._set_combo(self.cb_focus, im.get("FocusMode", "auto"))
+
+    def _apply_am7_imaging(self, im: dict, pt: dict | None):
+        """BRC-AM7: inne itemy i jednostki - przeliczamy na widgety UI."""
+        # tryb ekspozycji odtworzony z przelacznikow auto
+        a_shut = (im.get("ExposureAutoShutterEnable", "on") or "on").lower() == "on"
+        a_iris = (im.get("ExposureAutoIris", "on") or "on").lower() == "on"
+        mode = "auto" if (a_shut and a_iris) else ("iris" if a_shut else ("shutter" if a_iris else "manual"))
+        self._set_combo(self.cb_exp, mode)
+        # iris: suwak 0..1025 (0=CLOSE, 1025=F2.8)
+        self._slider_cfg(self.sl_iris, 0, 1025, am7_iris_label)
+        if im.get("ExposureIris") is not None:
+            self._set_slider(self.sl_iris, am7_iris_from_cam(im.get("ExposureIris")))
+        lo, hi = self._parse_range(im.get("ExposureGainRange"), 6, 45)
+        self._slider_cfg(self.sl_gain, lo, hi, gain_db_am7)
+        self._set_slider(self.sl_gain, im.get("ExposureGain"))
+        lo, hi = self._parse_range(im.get("ExposureExposureTimeRange"), 5, 25)
+        self._slider_cfg(self.sl_shut, lo, hi, lambda v: SHUTTER_50P_AM7.get(v, "?"))
+        self._set_slider(self.sl_shut, im.get("ExposureExposureTime"))
+        self._slider_cfg(self.sl_comp, 0, 24, ae_level_ev)
+        self._set_slider(self.sl_comp, im.get("ExposureCompensation"))
+        # balans bieli: atw / memory_a / preset
+        modes = list(AM7_WB_MODES)
+        if [self.cb_wb.itemText(i) for i in range(self.cb_wb.count())] != modes:
+            self.cb_wb.clear()
+            self.cb_wb.addItems(modes)
+        self._set_combo(self.cb_wb, im.get("WhiteBalanceMode", "atw"))
+        self._slider_cfg(self.sl_cb, -990, 990)
+        self._set_slider(self.sl_cb, im.get("WhiteBalanceCbGain"))
+        self._slider_cfg(self.sl_cr, -990, 990)
+        self._set_slider(self.sl_cr, im.get("WhiteBalanceCrGain"))
+        self._slider_cfg(self.sl_wboff, -99, 99)
+        self._set_slider(self.sl_wboff, im.get("WhiteBalanceOffsetColorTemp"))
+        # tryb focus siedzi w ptzf na AM7 - moze przyjsc z ktoregos zapytania
+        fm = im.get("FocusMode") or (pt or {}).get("FocusMode")
+        if fm in ("auto", "manual"):
+            self._set_combo(self.cb_focus, fm)
 
     def _set_combo(self, cb, val):
         i = cb.findText(str(val))
@@ -1114,10 +1292,33 @@ class CameraTab(QWidget):
     def poll_status(self):
         if not self.isVisible():
             return
-        ok, pt = self.api.status()
-        if ok and isinstance(pt, dict):
+        if self._poll is not None and self._poll.isRunning():
+            return
+        self._poll = _StatusPoll(self.api, timeout=2.0)
+        self._poll.done.connect(self.on_poll_done)
+        self._poll.start()
+
+    def on_poll_done(self, ok: bool, pt: dict):
+        if ok and pt:
+            self._poll_fails = 0
+            self.timer.setInterval(2000)
             self.status.setText(self.status_text(pt))
             self.follow_position(pt)
+            if self._need_full_refresh:  # kamera wrocila - uzupelnij tryby/sliders
+                self._need_full_refresh = False
+                self.refresh_all()
+            return
+        # backoff przy braku lacznosci - nie walimy w kamere co 2 s
+        self._poll_fails = min(self._poll_fails + 1, 3)
+        self.timer.setInterval((5000, 10000, 20000)[self._poll_fails - 1])
+        if self._poll_fails >= 2:
+            self.status.setText("brak lacznosci")
+
+    def shutdown(self):
+        """Domyka polling przed zamknieciem okna (bez blokowania GUI)."""
+        self.timer.stop()
+        if self._poll is not None and self._poll.isRunning():
+            self._poll.wait(2500)
 
     def follow_position(self, pt: dict):
         """Podswietla kadr zgodny z biezaca pozycja (np. po ruchu z panelu RM-IP500).
@@ -1131,6 +1332,9 @@ class CameraTab(QWidget):
         except (ValueError, TypeError):
             return
         match = -1
+        am7 = self.api.family == "am7"
+        full = 0x100000 if am7 else 0x10000
+        thr = 640 if am7 else 40   # ten sam kat fizyczny (0.001° vs 16-bit)
         for i, fr in enumerate(self.frames[:6]):
             if not isinstance(fr, dict):
                 continue
@@ -1138,10 +1342,10 @@ class CameraTab(QWidget):
                 f = [int(x, 16) for x in fr["ptzf"][:4]]
             except (ValueError, TypeError, KeyError):
                 continue
-            dp = min(abs(f[0] - curi[0]), 0x10000 - abs(f[0] - curi[0]))
-            dt = min(abs(f[1] - curi[1]), 0x10000 - abs(f[1] - curi[1]))
+            dp = min(abs(f[0] - curi[0]), full - abs(f[0] - curi[0]))
+            dt = min(abs(f[1] - curi[1]), full - abs(f[1] - curi[1]))
             dz = abs(f[2] - curi[2])
-            if dp <= 40 and dt <= 40 and dz <= 80:
+            if dp <= thr and dt <= thr and dz <= 80:
                 match = i
                 break
         if match != getattr(self, "_follow", -2):

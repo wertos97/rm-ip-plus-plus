@@ -155,6 +155,103 @@ assert isinstance(b.arp_candidates(None), list)
 assert isinstance(b.ssdp_search(timeout=0.5), list)
 print("subnet_bridge OK")
 
+import human as h
+# BRC-AM7: koordynaty 20-bit, 1 jedn. = 0.001 stopnia
+assert h.pan_deg20("2ab98") == 175.0
+assert h.pan_deg20("d5468") == -175.0
+assert h.tilt_deg20("33450") == 210.0
+assert abs(h.tilt_deg20("f8bd0") - (-29.744)) < 1e-6
+assert h.zoom_x_max("4000", 25.0) == 25.0   # AM7: 25x na koncu optyki
+assert h.zoom_x("4000") == 20.0             # SRG zostaje 20x
+# gain / AE level / migawka 50p AM7
+assert h.gain_db_am7(0) == "-9dB" and h.gain_db_am7(9) == "0dB" and h.gain_db_am7(45) == "36dB"
+assert h.ae_level_ev(12) == "0 EV" and h.ae_level_ev(24) == "+3 EV" and h.ae_level_ev(6) == "-1.5 EV"
+assert h.SHUTTER_50P_AM7[5] == "64F" and h.SHUTTER_50P_AM7[15] == "1/50" and h.SHUTTER_50P_AM7[25] == "1/8000"
+# iris: suwak 0..1025 <-> jednostki kamery + etykieta F
+assert h.am7_iris_to_cam(0) == 27366 and h.am7_iris_to_cam(1025) == 32000 and h.am7_iris_to_cam(1) == 30976
+assert h.am7_iris_from_cam(27366) == 0 and h.am7_iris_from_cam(32000) == 1025 and h.am7_iris_from_cam(30975) == 1
+assert h.am7_iris_label(0) == "CLOSE" and h.am7_iris_label(1) == "F11" and h.am7_iris_label(1025) == "F2.8"
+print("human AM7 OK")
+
+import cam_control as cc
+assert cc.rel16(-1) == "ffff" and cc.rel20(-1) == "fffff"
+api = cc.CameraAPI("192.0.2.10", "admin", "admin")
+sent = []
+api.cmd = lambda cgi, q, **kw: (sent.append((cgi, q)) or (True, ""))
+api._family = "am7"
+api._speedstep = "extended"
+api.move("up", 24)
+assert sent[-1] == ("ptzf.cgi", "PanTiltMove=up,127,127"), sent[-1]
+api._speedstep = "normal"
+api.move("up", 24)
+assert sent[-1] == ("ptzf.cgi", "PanTiltMove=up,24,24"), sent[-1]
+api._speedstep = "extended"
+api.zoom_move("tele", 8)
+assert sent[-1] == ("ptzf.cgi", "ZoomMove=tele,32766"), sent[-1]
+api.zoom_move("tele", 0)
+assert sent[-1] == ("ptzf.cgi", "ZoomMove=tele,0"), sent[-1]
+api._speedstep = "extended"
+api.relative_pt("00320", "ffce0", 5)
+assert sent[-1] == ("ptzf.cgi", "RelativePanTilt=00320,ffce0,26"), sent[-1]
+api.slow_mode(True)
+assert sent[-1] == ("ptzf.cgi", "PanTiltSpeedMode=slow")
+api.stop("pantilt")
+assert sent[-1] == ("ptzf.cgi", "PanTiltMove=stop")
+api.stop("zoom")
+assert sent[-1] == ("ptzf.cgi", "ZoomMove=stop")
+api.preset_recall(5, 10)
+assert sent[-1] == ("presetposition.cgi", "PresetCall=5")
+api.wb_onepush()
+assert sent[-1] == ("imaging.cgi", "WhiteBalanceWBSet=press")
+api.wb_onepush_release()
+assert sent[-1] == ("imaging.cgi", "WhiteBalanceWBSet=release")
+# fallback stopu: pierwszy wariant odrzucony -> drugi dziala
+calls = []
+def _cmd2(cgi, q, **kw):
+    calls.append(q)
+    return (len(calls) > 1, "HTTP 400")
+api.cmd = _cmd2
+api.stop("pantilt")
+assert calls == ["PanTiltMove=stop", "PanTiltMove=stop,0,0"], calls
+api.cmd = lambda cgi, q, **kw: (sent.append((cgi, q)) or (True, ""))
+# ekspozycja AM7: manual -> wszystko off + wartosci; auto -> tylko AE level
+sent.clear()
+api.set_exposure_am7("manual", 27366, 45, 15, 12)
+assert sent[0][1] == "ExposureAutoShutterEnable=off&ExposureAutoIris=off&ExposureAGCEnable=off", sent[0]
+assert sent[1][1] == "ExposureCompensation=12&ExposureIris=27366&ExposureGain=45&ExposureExposureTime=15", sent[1]
+sent.clear()
+api.set_exposure_am7("manual", 28000, 45, 15, 12)   # 28000 -> snap do 30975
+assert "ExposureIris=30975" in sent[1][1], sent[1]
+sent.clear()
+api.set_exposure_am7("auto", 32000, 9, 5, 24)
+assert sent[0][1] == "ExposureAutoShutterEnable=on&ExposureAutoIris=on&ExposureAGCEnable=on"
+assert sent[1][1] == "ExposureCompensation=24", sent[1]
+# WB AM7
+sent.clear()
+api.set_wb_am7("memory_a", -10, 20, 5)
+assert sent[-1][1] == "WhiteBalanceMode=memory_a&WhiteBalanceCbGain=-10&WhiteBalanceCrGain=20", sent[-1]
+sent.clear()
+api.set_wb_am7("atw", 0, 0, -7)
+assert sent[-1][1] == "WhiteBalanceMode=atw&WhiteBalanceOffsetColorTemp=-7", sent[-1]
+# SRG: komendy bez zmian (regresja)
+api._family = "srg"
+sent.clear()
+api.move("up-left", 10)
+assert sent[-1] == ("ptzf.cgi", "Move=up-left,10"), sent[-1]
+api.zoom_move("tele", 3)
+assert sent[-1] == ("ptzf.cgi", "Move=tele,3"), sent[-1]
+api.focus_move("near")
+assert sent[-1] == ("ptzf.cgi", "Move=near,4"), sent[-1]
+api.stop("pantilt")
+assert sent[-1] == ("ptzf.cgi", "Move=stop,pantilt"), sent[-1]
+api.slow_mode(True)
+assert sent[-1] == ("ptzf.cgi", "SlowPanTiltMode=on"), sent[-1]
+api.preset_recall(5, 10)
+assert sent[-1] == ("presetposition.cgi", "PresetCall=5,10"), sent[-1]
+api.wb_onepush()
+assert sent[-1] == ("imaging.cgi", "WhiteBalanceOnePushTrg=on"), sent[-1]
+print("cam_control AM7 OK")
+
 assert nm.is_virtual_alias("Polaczenie sieciowe Bluetooth") is True
 assert nm.is_virtual_alias("Siec komorkowa") is True
 assert nm.is_virtual_alias("Ethernet") is False

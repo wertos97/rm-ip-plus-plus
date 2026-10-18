@@ -53,11 +53,99 @@ def tilt_deg(h: str) -> float:
 
 def zoom_x(h: str) -> float:
     """Przybliżone powiekszenie optyczne 1-20x (liniowo; optyka nie jest idealnie liniowa)."""
+    return zoom_x_max(h, 20.0)
+
+
+def zoom_x_max(h: str, max_x: float = 25.0) -> float:
+    """AM7: optyczny tele end = 0x4000 (25x); powyżej wchodzi Clear Image Zoom."""
     try:
-        return 1.0 + 19.0 * max(0, int(h, 16)) / 0x4000
+        return 1.0 + (max_x - 1.0) * max(0, int(h, 16)) / 0x4000
     except (ValueError, TypeError):
         return float("nan")
 
 
 def fmt_deg(d: float) -> str:
     return "?" if d != d else f"{d:+.1f}°"
+
+
+# ---------- BRC-AM7 (CGI Command List 2.0): inne jednostki niż SRG-X400 ----------
+
+def _s20(h: str) -> int:
+    """Pan/tilt AM7: 20-bitowa liczba ze znakiem, 1 jednostka = 0.001°."""
+    v = int(h, 16)
+    return v - 0x100000 if v >= 0x80000 else v
+
+
+def pan_deg20(h: str) -> float:
+    try:
+        return _s20(h) / 1000.0
+    except (ValueError, TypeError):
+        return float("nan")
+
+
+def tilt_deg20(h: str) -> float:
+    return pan_deg20(h)
+
+
+def gain_db_am7(v) -> str:
+    """AM7: 0=-9dB, 9=0dB, 45=+36dB."""
+    try:
+        return f"{int(v) - 9}dB"
+    except (ValueError, TypeError):
+        return "?"
+
+
+def ae_level_ev(v) -> str:
+    """AM7 AE Level: 0..24 -> -3.0..+3.0 EV (0.25 EV/krok, 12 = 0)."""
+    try:
+        ev = (int(v) - 12) * 0.25
+    except (ValueError, TypeError):
+        return "?"
+    if ev == 0:
+        return "0 EV"
+    s = f"{ev:+.2f}".rstrip("0").rstrip(".")
+    return s + " EV"
+
+
+# Migawka BRC-AM7 dla 1080/50p (CGI Command List 2.0, "Shutter (Speed)")
+SHUTTER_50P_AM7 = {
+    5: "64F", 6: "32F", 7: "16F", 8: "8F", 9: "7F", 10: "6F", 11: "5F",
+    12: "4F", 13: "3F", 14: "2F", 15: "1/50", 16: "1/60", 17: "1/100",
+    18: "1/120", 19: "1/125", 20: "1/250", 21: "1/500", 22: "1/1000",
+    23: "1/2000", 24: "1/4000", 25: "1/8000",
+}
+
+# Iris AM7: 27366 = CLOSE, 30975 (F11) .. 32000 (F2.8), 1 jednostka = 1/256 EV.
+# Suwak UI mapujemy na 0..1025 (0=CLOSE, 1025=F2.8), zeby nie bylo martwej strefy.
+AM7_IRIS_CLOSE = 27366
+AM7_IRIS_MIN = 30975
+AM7_IRIS_MAX = 32000
+AM7_IRIS_SPAN = AM7_IRIS_MAX - AM7_IRIS_MIN  # 1025
+
+_IRIS_STD = (2.8, 3.2, 3.5, 4.0, 4.5, 5.0, 5.6, 6.3, 7.1, 8.0, 9.0, 10.0,
+             11.0, 13.0, 14.0, 16.0, 18.0, 20.0, 22.0)
+
+
+def am7_iris_to_cam(slider_v) -> int:
+    v = int(slider_v)
+    return AM7_IRIS_CLOSE if v <= 0 else AM7_IRIS_MIN + min(v, AM7_IRIS_SPAN)
+
+
+def am7_iris_from_cam(cam_v) -> int:
+    try:
+        cam_v = int(cam_v)
+    except (ValueError, TypeError):
+        return 0
+    return 0 if cam_v <= AM7_IRIS_CLOSE + 34 else max(1, min(AM7_IRIS_SPAN, cam_v - AM7_IRIS_MIN))
+
+
+def am7_iris_label(slider_v) -> str:
+    try:
+        v = int(slider_v)
+    except (ValueError, TypeError):
+        return "?"
+    if v <= 0:
+        return "CLOSE"
+    f = 2.8 * 2 ** ((AM7_IRIS_SPAN - min(v, AM7_IRIS_SPAN)) / 512.0)
+    best = min(_IRIS_STD, key=lambda x: abs(x - f))
+    return f"F{best:g}"

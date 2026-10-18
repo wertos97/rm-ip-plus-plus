@@ -3,6 +3,19 @@
 Jedno okno, zakladki dla kazdej kamery: pelne PTZ, presety, kadry lokalne,
 obraz (ekspozycja/WB) + most sieciowy WiFi+Ethernet. Zero konfiguracji IP.
 
+## Modele
+- **SRG-X400 / BRC-X400** (i pokrewne z tym samym CGI) - wsparcie pelne,
+  sprawdzone na zywo.
+- **BRC-AM7** - wsparcie wg dokumentacji Sony "CGI Command List" v2.0,
+  wykrywane automatycznie (`inq=viewermode` -> ModelName):
+  PanTiltMove/ZoomMove (skala 0-127), PanTiltSpeedMode, RelativePanTilt,
+  AbsolutePTZF (20-bit, 1 jedn. = 0.001°), presety (max 100), imaging.
+  Roznice: focus Near/Far dziala krokowo (AbsoluteFocus - kamera nie ma
+  ciaglego ruchu po CGI), przywolanie presetu bez predkosci, zamiast
+  ExposureMode trzy przelaczniki auto (migawka/przyslona/AGC), iris/gain
+  w jednostkach AM7 (F/dB), migawka 50p, WB: atw/memory_a/preset,
+  OnePush AF/WB jako press+release. Szczegoly w oknie "O aplikacji".
+
 ## Co potrafi
 - **Wykrywanie kamer**: ARP + SSDP + znane IP + zakres CIDR, przycisk Stop,
   kolumna statusu i modelu (np. `SRG-X400 (CAM2)`). Rownolegle leci
@@ -29,7 +42,9 @@ obraz (ekspozycja/WB) + most sieciowy WiFi+Ethernet. Zero konfiguracji IP.
   (`AbsolutePTZF` w configu aplikacji), przywracane jednym poleceniem.
   Nigdy nie ruszaja ekspozycji ani balansu bieli.
 - **Obraz**: ekspozycja (iris/gain/shutter/komp.) i balans bieli z odczytem
-  stanu z kamery; wartosci czytelne (F3.1, 1/30, +3 dB, stopnie, xN).
+  stanu z kamery; wartosci czytelne (F3.1, 1/30, +3 dB, stopnie, xN);
+  jednostki dopasowane do modelu (SRG vs BRC-AM7).
+- **O aplikacji**: przycisk w panelu bocznym - opis, modele, roznice i ograniczenia.
 - **Styl**: czern + amber akcent (Alpha 7), techniczna czcionka.
 
 ## Uzycie
@@ -63,9 +78,10 @@ python tools/udp_probe.py --write --mac ... --ip ... --name ...   # SET sieci
 - `src/discovery.py` - ARP/SSDP/probe rownolegly z postepem
 - `src/net_manager.py` - karty, temp IP, UAC, cleanup
 - `src/subnet_bridge.py` - SSDP M-SEARCH, ARP, dobor bridge IP
-- `src/human.py` - mapy wartosci (shutter/iris/gain/dB/stopnie/zoom)
+- `src/human.py` - mapy wartosci (shutter/iris/gain/dB/stopnie/zoom; SRG + BRC-AM7)
 - `src/theme.py` - motyw Alpha 7 (czern + amber)
 - `src/edge_view.py` - karta Edge `--app` per kamera (fallback)
+- `assets/icon.svg` - ikona aplikacji (wektor); `python tools/make_ico.py` -> `assets/icon.ico`
 
 ## Wazne: najpierw link fizyczny
 Most to warstwa L3 - nie zastapi kabla ani zasilania. Jesli Windows pokazuje

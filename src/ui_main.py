@@ -8,15 +8,16 @@ from __future__ import annotations
 
 import atexit
 import datetime
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import QEvent, Qt, QThread, Signal, QTimer
-from PySide6.QtGui import QColor, QCursor
+from PySide6.QtGui import QColor, QCursor, QIcon
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QApplication, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
     QSplitter, QStatusBar, QTableWidget, QTableWidgetItem, QTabWidget,
-    QVBoxLayout, QWidget,
+    QTextBrowser, QVBoxLayout, QWidget,
 )
 
 try:
@@ -56,6 +57,93 @@ class _CenterHint(QLabel):
         if ev.type() == QEvent.Type.Resize:
             self.setGeometry(obj.rect())
         return False
+
+
+ABOUT_HTML = """
+<style>
+  body { color: #f2f2f2; font-size: 13px; }
+  h3 { color: #ff9e2c; margin: 2px 0 2px 0; }
+  h4 { color: #ff9e2c; margin: 16px 0 4px 0; letter-spacing: 1px; }
+  li { margin-bottom: 4px; }
+  .dim { color: #9aa0a6; }
+  .tag { color: #ffd9a0; font-weight: bold; }
+</style>
+<h3>RM IP++ &nbsp;<span class="dim" style="font-size:12px;">program do kamer Sony po sieci IP</span></h3>
+<p>Windows, PySide6. Jedno okno, zakładka na kamerę. Program nie odbiera obrazu wideo &mdash;
+kamera nadaje po SDI/HDMI do miksera. Do kamery wysyła komendy HTTP CGI (Digest) i odczytuje jej stan.</p>
+
+<h4>FUNKCJE</h4>
+<ul>
+<li><span class="tag">PTZ</span> &mdash; pad 8-kierunkowy + HOME. Jazda: ruch trwa w trakcie
+  przytrzymania (krótki klik = 0,5 s ruchu). Krok: klik = 1 krok (wielkość 1-2000),
+  przytrzymanie = po 0,3 s ruch ciągły. Prędkość 0-24 (0 = auto wg zoomu).</li>
+<li><span class="tag">Zoom / Focus</span> &mdash; W-/T+ (prędkość 0-8); Near/Far,
+  OnePush AF, tryb auto/manual.</li>
+<li><span class="tag">Kadry 1-16 + szybkie 1-6</span> &mdash; zapis i przywołanie
+  wyłącznie pan/tilt/zoom/focus (AbsolutePTZF); przyciski 1-6 podświetlają kadr
+  zgodny z bieżącą pozycją kamery.</li>
+<li><span class="tag">Presety kamery</span> &mdash; siatka 1-256 (BRC-AM7: 1-100):
+  przywołanie, zapis, kasowanie, nazwy, miniaturki z kadru kamery.</li>
+<li><span class="tag">Obraz</span> &mdash; ekspozycja (tryb, przysłona, gain, migawka,
+  kompensacja) i balans bieli (tryb, wzmocnienia, offset); wartości w jednostkach
+  kamery (F, dB / EV, 1/…, klatki).</li>
+<li><span class="tag">Sieć</span> &mdash; wykrywanie kamer (ARP, SSDP, UDP 52380);
+  zmiana IP / maski / bramy / nazwy przez UDP (SET + ACK/NAK); odczyt tabeli slotów
+  panelu RM-IP500; import/eksport CSV w formacie Sony.</li>
+<li><span class="tag">Log</span> &mdash; komendy, odpowiedzi i błędy na dole okna głównego.</li>
+</ul>
+
+<h4>MODELE</h4>
+<ul>
+<li><span class="tag">SRG-X400 / BRC-X400</span> &mdash; komendy zweryfikowane na SRG-X400
+  (HTTP CGI z digest auth, port 80).</li>
+<li><span class="tag">BRC-AM7</span> &mdash; mapowanie wg Sony &bdquo;CGI Command List&rdquo; v2.0;
+  model rozpoznawany przez inq=viewermode. Zestaw komend nieprzetestowany na sprzęcie.</li>
+</ul>
+
+<h4>BRC-AM7 &mdash; RÓŻNICE</h4>
+<ul>
+<li>Focus Near/Far krokowo (AbsoluteFocus); brak ciągłego ruchu ostrości w CGI.</li>
+<li>Presety 1-100; przywołanie tylko numerem, bez prędkości.</li>
+<li>Brak ExposureMode: trzy przełączniki auto (migawka / przysłona / AGC); program
+  spina je w tryby auto / shutter / iris / manual.</li>
+<li>Skale: przysłona CLOSE / F2.8-F11, gain -9 do +36 dB, migawka 50p (1/50-1/8000,
+  64F-2F), kąty co 0,001°, zoom do 25x.</li>
+<li>Balans bieli: atw / memory_a / preset. OnePush AF/WB jako press+release.</li>
+</ul>
+
+<h4>OGRANICZENIA</h4>
+<ul>
+<li>Brak podglądu wideo; obraz idzie z kamery po SDI/HDMI.</li>
+<li>UDP SET działa tylko przy WRITE:on w kamerze; stan WRITE jest w podpowiedzi
+  urządzenia na liście.</li>
+<li>Tabela panelu RM-IP500: odczyt i eksport CSV; zapis do panelu nie jest wysyłany.</li>
+<li>Kadry nie obejmują ekspozycji, balansu bieli ani kolorów.</li>
+<li>Kamery nieosiągalne w sieci nie odtwarzają zakładek przy starcie.</li>
+</ul>
+<p class="dim">Sterowanie: HTTP CGI (Digest), port 80 kamery. Wykrywanie i SET sieci: UDP 52380.</p>
+"""
+
+
+class AboutDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("O aplikacji")
+        self.resize(780, 640)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(12, 12, 12, 12)
+        v.setSpacing(10)
+        tb = QTextBrowser()
+        tb.setOpenExternalLinks(False)
+        tb.setHtml(ABOUT_HTML)
+        v.addWidget(tb, 1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        b = QPushButton("Zamknij")
+        b.setMinimumWidth(130)
+        b.clicked.connect(self.accept)
+        row.addWidget(b)
+        v.addLayout(row)
 
 
 class ScanWorker(QThread):
@@ -110,7 +198,7 @@ class ScanWorker(QThread):
                                            self.step.emit(f"Skan: {d}/{t}...")))
                 out = disc.merge_udp(out, self._udp_result(fut_udp))
         else:
-            self.step.emit("Skan: UDP ENQ:network (52380) rownolegle...")
+            self.step.emit("Skan: UDP 52380...")
             with ThreadPoolExecutor(max_workers=1) as uex:
                 fut_udp = self._start_udp(uex)
                 out = disc.scan_subnet(self.cidr, self.user, self.password,
@@ -145,7 +233,7 @@ class ScanWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("RM IP++ — konsola kamer Sony")
+        self.setWindowTitle("RM IP++")
         self.resize(1360, 820)
         self.config = cfg.load()
         self.user = self.config.get("user", DEFAULT_USER)
@@ -198,21 +286,20 @@ class MainWindow(QMainWindow):
         v.addWidget(self.adv)
         ar1 = QHBoxLayout()
         adv_lay.addLayout(ar1)
-        ar1.addWidget(QLabel("Skan calej podsieci (CIDR):"))
+        ar1.addWidget(QLabel("Podsiec (CIDR):"))
         self.e_cidr = QLineEdit(self.config.get("scan_cidr", "192.168.0.0/24"))
         self.e_cidr.setMaximumWidth(150)
         ar1.addWidget(self.e_cidr)
-        self.btn_full = QPushButton("Skanuj podsieci")
+        self.btn_full = QPushButton("Skanuj podsiec")
         self.btn_full.clicked.connect(lambda: self.start_scan("full"))
         ar1.addWidget(self.btn_full)
         self.btn_bridge = QPushButton("Dobuduj most do nieosiagalnych")
-        self.btn_bridge.setToolTip("Dla kamer spoza zasiegu: doklada secondary IP na fizycznym Ethernecie. WiFi z internetem nietkniete.")
         self.btn_bridge.clicked.connect(self.on_bridge)
         ar1.addWidget(self.btn_bridge)
         ar1.addStretch(1)
         ar2 = QHBoxLayout()
         adv_lay.addLayout(ar2)
-        ar2.addWidget(QLabel("Login do kamery:"))
+        ar2.addWidget(QLabel("Login:"))
         self.e_user = QLineEdit(self.user)
         self.e_user.setMaximumWidth(110)
         ar2.addWidget(self.e_user)
@@ -271,41 +358,32 @@ class MainWindow(QMainWindow):
         self.cam_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.cam_table.customContextMenuRequested.connect(self.dev_menu)
         self.cam_table.doubleClicked.connect(self.open_web_tab)
-        self.cam_empty = _CenterHint(
-            "Brak urzadzen.\n\n"
-            "Kliknij «Skanuj» albo «Dodaj IP...».\n"
-            "Lista pokazuje tylko kamery Sony (HTTP / VISCA / UDP 52380) - "
-            "routery, NAS i inne sprzety z sieci sa pomijane.",
-            self.cam_table.viewport())
+        self.cam_empty = _CenterHint("Brak urzadzen.", self.cam_table.viewport())
         lv.addWidget(self.cam_table, 1)
         devbtn = QHBoxLayout()
         devbtn.setSpacing(8)
         lv.addLayout(devbtn)
         self.btn_addip = QPushButton("Dodaj IP...")
-        self.btn_addip.setToolTip("Recznie dopisz kamere (gdy skan jej nie widzi).")
         self.btn_addip.clicked.connect(self.add_manual_ip)
         devbtn.addWidget(self.btn_addip)
         self.btn_all = QPushButton("Steruj wszystkimi")
-        self.btn_all.setToolTip("Otwiera zakladki sterowania dla wszystkich z tabeli.")
         self.btn_all.clicked.connect(self.open_all_tabs)
         devbtn.addWidget(self.btn_all)
         devbtn2 = QHBoxLayout()
         devbtn2.setSpacing(8)
         lv.addLayout(devbtn2)
-        self.btn_udpnet = QPushButton("Sieć kamery (UDP)…")
-        self.btn_udpnet.setToolTip("Zmienia IP/maske/brame/nazwe kamery przez broadcast UDP 52380 "
-                                   "(protokol Sony - dziala tez dla kamery z innej podsieci).")
+        self.btn_udpnet = QPushButton("Sieć kamery…")
         self.btn_udpnet.clicked.connect(self.open_udp_write)
         devbtn2.addWidget(self.btn_udpnet)
-        self.btn_camtable = QPushButton("Tabela panelu (UDP)…")
-        self.btn_camtable.setToolTip("Odczytuje tabele kamer z panelu RM-IP (ENQ:camtable) "
-                                     "i pozwala eksportowac ja do CSV zgodnego z RM-IP Setup Tool.")
+        self.btn_camtable = QPushButton("Tabela panelu…")
         self.btn_camtable.clicked.connect(self.open_camtable)
         devbtn2.addWidget(self.btn_camtable)
         self.btn_csv = QPushButton("CSV…")
-        self.btn_csv.setToolTip("Eksport/import listy kamer w formacie CSV RM-IP Setup Tool.")
         self.btn_csv.clicked.connect(self.csv_menu)
         devbtn2.addWidget(self.btn_csv)
+        self.btn_about = QPushButton("O aplikacji")
+        self.btn_about.clicked.connect(self.show_about)
+        devbtn2.addWidget(self.btn_about)
         split.addWidget(left)
 
         right = QWidget()
@@ -320,11 +398,9 @@ class MainWindow(QMainWindow):
         row.setSpacing(8)
         rv.addLayout(row)
         self.btn_add = QPushButton("Steruj zaznaczona")
-        self.btn_add.setToolTip("Otwiera zakladke sterowania VISCA/CGI dla kamery z tabeli.")
         self.btn_add.clicked.connect(self.add_ctrl_tab)
         row.addWidget(self.btn_add)
         self.btn_web = QPushButton("Otworz w Edge")
-        self.btn_web.setToolTip("Pelna strona kamery w Edge (osobne okno, wideo H.264).")
         self.btn_web.clicked.connect(self.open_external)
         row.addWidget(self.btn_web)
         self.log = QPlainTextEdit()
@@ -338,8 +414,8 @@ class MainWindow(QMainWindow):
 
         sb = QStatusBar()
         self.setStatusBar(sb)
-        admin = nm.is_admin()
-        sb.showMessage(f"{'ADMIN' if admin else 'most poprosi o UAC tylko gdy bedzie potrzebny'}")
+        if nm.is_admin():
+            sb.showMessage("ADMIN")
 
         atexit.register(nm.cleanup_all)
         self.check_orphans()
@@ -385,7 +461,7 @@ class MainWindow(QMainWindow):
             bi = nm.best_bridge_iface() or "brak Ethernetu"
             n = len(nm._load_state())
             n_txt = str(n) if n else "brak"
-            self.net_lbl.setText(f"Most auto: {bi} | temp IP: {n_txt} | WiFi: internet")
+            self.net_lbl.setText(f"Most auto: {bi} | temp IP: {n_txt}")
         except Exception:
             pass
 
@@ -403,6 +479,10 @@ class MainWindow(QMainWindow):
         if self.worker and self.worker.isRunning():
             self.worker.stop()
             self.worker.wait(3000)
+        for i in range(self.ctrl_tabs.count()):  # domknij polling statusu w kartach
+            wdg = self.ctrl_tabs.widget(i)
+            if hasattr(wdg, "shutdown"):
+                wdg.shutdown()
         # sprzatanie w tle - zamkniecie nigdy nie wisi na UAC
         import threading
         threading.Thread(target=nm.cleanup_all, daemon=True).start()
@@ -454,7 +534,7 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(True)
         self.btn_stop.setVisible(True)
         self.btn_fast.setEnabled(False)
-        self.lbl.setText("Skanowanie... (reszta aplikacji dziala normalnie)")
+        self.lbl.setText("Skanowanie...")
         self.log_line(f"Skan {mode} (cidr={self.e_cidr.text()}).")
         self.worker = ScanWorker(mode, self.e_cidr.text().strip(), self.user, self.password,
                                  known=self.config.get("known_ips", []))
@@ -508,7 +588,7 @@ class MainWindow(QMainWindow):
         self.cam_empty.setVisible(not self.cams)
         self.cam_empty.raise_()
         n = len(found)
-        self.lbl.setText(f"Wykryto: {n} · dwuklik = sterowanie")
+        self.lbl.setText(f"Wykryto: {n}")
         self.log_line(f"Skan koniec: {[c['ip'] for c in found]}")
         if not getattr(self, "_restored", False):
             self._restored = True
@@ -636,10 +716,11 @@ class MainWindow(QMainWindow):
             self.ctrl_tabs.setCurrentIndex(self.ctrl_ips().index(ip))
             return
         port = next((c.get("http_port", 80) for c in self.cams if c["ip"] == ip), 80)
+        http = bool(next((c.get("http") for c in self.cams if c["ip"] == ip), False))
         tab = CameraTab(ip, self.e_user.text().strip() or DEFAULT_USER,
                         self.e_pass.text(), http_port=port, log=self.log_line,
                         frames=self.config.get("frames", {}).get(ip),
-                        save_frames=lambda: self.save_frames(ip))
+                        save_frames=lambda: self.save_frames(ip), reachable=http)
         tab.setProperty("ip", ip)
         idx = self.ctrl_tabs.addTab(tab, self._tab_label(ip))
         self.ctrl_tabs.setTabToolTip(idx, f"{ip} · sterowanie CGI")
@@ -662,6 +743,9 @@ class MainWindow(QMainWindow):
             pass
 
     def close_ctrl_tab(self, i):
+        wdg = self.ctrl_tabs.widget(i)
+        if hasattr(wdg, "shutdown"):
+            wdg.shutdown()
         self.ctrl_tabs.removeTab(i)
         self.refresh_panel_col()
         self.save_open_tabs()
@@ -678,15 +762,22 @@ class MainWindow(QMainWindow):
             from .ui_control import CameraTab
         except ImportError:
             from ui_control import CameraTab  # noqa: E402
+        found = {c["ip"] for c in self.cams}
         for ip in self.config.get("open_tabs", []):
             if ip in self.ctrl_ips():
                 continue  # juz otwarta (np. dodana recznie tuz po skanie)
+            if ip not in found:
+                # kamera nie odpowiada (inna siec) - zakladka zamulalaby okno
+                self.log_line(f"Pomijam zakladke {ip} (kamera nie odpowiada).")
+                continue
             try:
                 port = next((c.get("http_port", 80) for c in self.cams if c["ip"] == ip), 80)
+                http = bool(next((c.get("http") for c in self.cams if c["ip"] == ip), False))
                 tab = CameraTab(ip, self.e_user.text().strip() or DEFAULT_USER,
                                 self.e_pass.text(), http_port=port, log=self.log_line,
                                 frames=self.config.get("frames", {}).get(ip),
-                                save_frames=lambda ip=ip: self.save_frames(ip))
+                                save_frames=lambda ip=ip: self.save_frames(ip),
+                                reachable=http)
                 tab.setProperty("ip", ip)
                 idx = self.ctrl_tabs.addTab(tab, self._tab_label(ip))
                 self.ctrl_tabs.setTabToolTip(idx, f"{ip} · sterowanie CGI")
@@ -770,9 +861,7 @@ class MainWindow(QMainWindow):
         self.log_line(f"UDP SET: ACK potwierdzone, {old_ip} -> {new_ip}.")
         QMessageBox.information(
             self, "UDP SET",
-            f"Kamera potwierdzila zmiane (ACK):\n\n  {old_ip}  ->  {new_ip}\n\n"
-            "Odswiezam liste urzadzen. Jesli nowy adres jest poza podsiecia "
-            "komputera, uzyj mostu (Zaawansowane > Dobuduj most do nieosiagalnych).")
+            f"Kamera potwierdzila zmiane (ACK):\n\n  {old_ip}  ->  {new_ip}")
         QTimer.singleShot(900, lambda: self.start_scan("fast"))
 
     def open_camtable(self):
@@ -783,11 +872,15 @@ class MainWindow(QMainWindow):
         dlg = CamtableDialog(self)
         dlg.exec()
 
+    def show_about(self):
+        dlg = AboutDialog(self)
+        dlg.exec()
+
     def csv_menu(self):
         from PySide6.QtWidgets import QMenu
         menu = QMenu(self)
-        a1 = menu.addAction("Eksportuj liste kamer (CSV Sony)...")
-        a2 = menu.addAction("Importuj liste kamer (CSV Sony)...")
+        a1 = menu.addAction("Eksportuj liste kamer (CSV)...")
+        a2 = menu.addAction("Importuj liste kamer (CSV)...")
         act = menu.exec(self.btn_csv.mapToGlobal(self.btn_csv.rect().center()))
         if act == a1:
             self.export_camera_csv()
@@ -809,7 +902,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "CSV", "Lista urzadzen jest pusta.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Eksport listy kamer (CSV Sony)", "rmip_cameras.csv",
+            self, "Eksport listy kamer (CSV)", "rmip_cameras.csv",
             "CSV (*.csv);;Wszystkie pliki (*)")
         if not path:
             return
@@ -824,7 +917,7 @@ class MainWindow(QMainWindow):
 
     def import_camera_csv(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Import listy kamer (CSV Sony)", "", "CSV (*.csv);;Wszystkie pliki (*)")
+            self, "Import listy kamer (CSV)", "", "CSV (*.csv);;Wszystkie pliki (*)")
         if not path:
             return
         try:
@@ -871,9 +964,15 @@ class MainWindow(QMainWindow):
         self.log_line(f"CSV: wczytano {len(rows)} wierszy ({added} nowych na liscie).")
         QMessageBox.information(
             self, "CSV",
-            f"Wczytano {len(rows)} kamer z pliku.\nNowych na liscie: {added}.\n"
-            "Uruchamiam skan, zeby potwierdzic je w sieci.")
+            f"Wczytano {len(rows)} kamer z pliku. Nowych na liscie: {added}.")
         self.start_scan("fast")
+
+
+def app_icon():
+    """Ikona aplikacji z assets/icon.svg (wektor: ostra w kazdym rozmiarze)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        os.pardir, "assets", "icon.svg")
+    return QIcon(os.path.normpath(path))
 
 
 def run():
@@ -884,6 +983,7 @@ def run():
         from theme import apply_theme  # noqa: E402
     app = QApplication(sys.argv)
     apply_theme(app)
+    app.setWindowIcon(app_icon())
     w = MainWindow()
     w.showMaximized()
     sys.exit(app.exec())

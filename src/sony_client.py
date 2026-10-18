@@ -90,6 +90,18 @@ class SonyCamera:
                             break
             except Exception:
                 pass
+            if "ModelName" not in out:
+                # BRC-AM7 nie ma inqjs=license - model z inq=viewermode (CGI 2.0)
+                try:
+                    rv = self._get("/command/inquiry.cgi?inq=viewermode", timeout=timeout)
+                    if rv.status_code == 200:
+                        for line in rv.text.replace(",", "\n").replace("&", "\n").splitlines():
+                            if "ModelName" in line and "=" in line:
+                                out["ModelName"] = line.split("=", 1)[1].strip().strip("'\"")
+                                if out["ModelName"]:
+                                    break
+                except Exception:
+                    pass
             if not any(k.lower() in SONY_NET_KEYS for k in out):
                 return False, ("HTTP 200, ale brak pol odpowiedzi Sony (to nie "
                                "kamera - np. router, NAS, captive portal).")
