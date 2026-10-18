@@ -16,6 +16,13 @@ DEFAULT_USER = "admin"
 DEFAULT_PASSWORD = "admin"
 TIMEOUT = 6
 
+# Pola wystepujace w prawdziwej odpowiedzi inquiry.cgi?inq=network (SRG/BRC).
+# Samo HTTP 200 z "klucz=wartosc" to za malo - router hotelowy czy NAS Synology
+# tez tak odpowiadaja, a ich HTML zawiera przypadkowe pary klucz=wartosc.
+SONY_NET_KEYS = {"ipaddress", "subnetmask", "defaultgateway", "dhcp", "dns",
+                 "hostname", "modelname", "cameraname", "macaddress", "mac",
+                 "serialnumber", "deviceuniqueid", "softversion"}
+
 
 class SonyCamera:
     def __init__(self, ip: str, user: str = DEFAULT_USER, password: str = DEFAULT_PASSWORD,
@@ -83,6 +90,9 @@ class SonyCamera:
                             break
             except Exception:
                 pass
-            return True, out if out else {"_raw": r.text[:1000]}
+            if not any(k.lower() in SONY_NET_KEYS for k in out):
+                return False, ("HTTP 200, ale brak pol odpowiedzi Sony (to nie "
+                               "kamera - np. router, NAS, captive portal).")
+            return True, out
         except Exception as e:
             return False, str(e)[:300]

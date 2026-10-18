@@ -150,7 +150,7 @@ class SlotCard(QWidget):
         f.setBold(True)
         p.setFont(f)
         txt = f"{self.num} · {self.name}" if self.name else f"{self.num} · {self.empty_word}"
-        p.drawText(_RF(r.x() + 10, r.bottom() - bar_h, r.width() - 20, bar_h),
+        p.drawText(_RF(r.x() + 12, r.bottom() - bar_h, r.width() - 24, bar_h),
                    Qt.AlignVCenter | Qt.AlignLeft, txt)
 
         # ramka
@@ -244,7 +244,10 @@ class PresetPanel(QWidget):
 
     def _build(self):
         v = QVBoxLayout(self)
+        v.setContentsMargins(10, 10, 10, 10)
+        v.setSpacing(8)
         top = QHBoxLayout()
+        top.setSpacing(8)
         v.addLayout(top)
         self.btn_recall = QPushButton("Przywolaj")
         self.btn_recall.setCheckable(True)
@@ -271,17 +274,22 @@ class PresetPanel(QWidget):
         self.btn_thumbs.clicked.connect(self.generate_thumbs)
         top.addWidget(self.btn_thumbs)
         nav = QHBoxLayout()
+        nav.setSpacing(8)
         v.addLayout(nav)
         self.btn_prev = QPushButton("◀ 1-16")
+        self.btn_prev.setMinimumWidth(96)
         self.btn_prev.clicked.connect(lambda: self.set_page(self.page - 1))
         nav.addWidget(self.btn_prev)
         self.lb_page = QLabel()
         self.lb_page.setStyleSheet("color: #9aa0a6;")
         nav.addWidget(self.lb_page, 1)
         self.btn_next = QPushButton("241-256 ▶")
+        self.btn_next.setMinimumWidth(96)
         self.btn_next.clicked.connect(lambda: self.set_page(self.page + 1))
         nav.addWidget(self.btn_next)
         self.grid = QGridLayout()
+        self.grid.setContentsMargins(0, 2, 0, 0)
+        self.grid.setSpacing(10)
         v.addLayout(self.grid, 1)
         self.slot = 1
 
@@ -291,7 +299,7 @@ class PresetPanel(QWidget):
         self.btn_save.setChecked(m == "save")
         base = self.page * 16
         action = "przywolanie" if m == "recall" else "ZAPIS (nadpisze slot!)"
-        self.lb_page.setText(f"Sloty {base + 1}-{base + 16} (klik = {action})")
+        self.lb_page.setText(f"Sloty {base + 1}-{base + 16} · klik = {action}")
 
     def set_page(self, p):
         self.page = max(0, min(15, p))
@@ -515,7 +523,10 @@ class FramePanel(QWidget):
     def _build(self):
         from PySide6.QtWidgets import QSizePolicy, QToolButton
         v = QVBoxLayout(self)
+        v.setContentsMargins(10, 10, 10, 10)
+        v.setSpacing(8)
         top = QHBoxLayout()
+        top.setSpacing(8)
         v.addLayout(top)
         self.btn_recall = QPushButton("Idz do")
         self.btn_recall.setCheckable(True)
@@ -533,6 +544,8 @@ class FramePanel(QWidget):
         hint.setStyleSheet("color: gray;")
         top.addWidget(hint, 1)
         self.grid = QGridLayout()
+        self.grid.setContentsMargins(0, 2, 0, 0)
+        self.grid.setSpacing(10)
         v.addLayout(self.grid, 1)
         self.slot = 0
 
@@ -647,6 +660,7 @@ class CameraTab(QWidget):
         self.save_frames = save_frames or (lambda: None)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
         self.pages = QTabWidget()
         outer.addWidget(self.pages, 1)
         ctrl = QWidget()
@@ -658,18 +672,20 @@ class CameraTab(QWidget):
         self.pages.addTab(self.frame_panel, "Kadry PTZ")
         # dolny pasek: status + szybkie kadry 1-6
         bottom = QHBoxLayout()
-        bottom.setContentsMargins(0, 6, 0, 0)
-        bottom.setSpacing(6)
+        bottom.setContentsMargins(0, 12, 0, 0)
+        bottom.setSpacing(8)
         outer.addLayout(bottom)
         bottom.addWidget(self.status, 1)
-        bottom.addSpacing(10)
+        bottom.addSpacing(16)
         lb_k = QLabel("KADRY:")
         lb_k.setProperty("sec", "1")
         bottom.addWidget(lb_k)
+        bottom.addSpacing(6)
         self.quick_btns: list[QPushButton] = []
         for n in range(1, 7):
             b = QPushButton(str(n))
-            b.setMinimumSize(86, 38)
+            b.setMinimumSize(96, 38)
+            b.setMaximumWidth(170)
             b.setFocusPolicy(Qt.NoFocus)
             b.clicked.connect(lambda _, nn=n: self.quick_frame(nn))
             bottom.addWidget(b)
@@ -691,16 +707,22 @@ class CameraTab(QWidget):
     def _build(self, base: QWidget):
         from PySide6.QtWidgets import QButtonGroup, QGroupBox, QRadioButton, QSizePolicy
         root = QHBoxLayout(base)
-        root.setSpacing(12)
+        root.setContentsMargins(12, 10, 12, 12)
+        root.setSpacing(10)
 
-        # ---- kolumna PTZ ----
+        # ---- kolumna PTZ: pad + karta "Ruch" ----
+        col1 = QVBoxLayout()
+        col1.setSpacing(10)
+        root.addLayout(col1, 1)
         gb_ptz = QGroupBox("PTZ")
         gb_ptz.setMinimumWidth(300)
-        root.addWidget(gb_ptz, 1)
+        col1.addWidget(gb_ptz)
         left = QVBoxLayout(gb_ptz)
+        left.setContentsMargins(10, 8, 10, 10)
+        left.setSpacing(8)
         pad = QGridLayout()
-        pad.setSpacing(6)
-        left.addLayout(pad, 1)
+        pad.setSpacing(8)
+        left.addLayout(pad)
         for direction, label, r, c in DIRS:
             if direction == "home":
                 b = QPushButton("HOME")
@@ -708,16 +730,24 @@ class CameraTab(QWidget):
                 f.setPointSize(13)
                 f.setBold(True)
                 b.setFont(f)
-                b.setMinimumSize(68, 56)
+                b.setMinimumSize(68, 72)
                 b.setFocusPolicy(Qt.NoFocus)
                 b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 b.clicked.connect(lambda: self.run(self.api.home(), "Home"))
             else:
                 b = PadButton(label, lambda hold, d=direction: self.pad_action(d, hold))
+                b.setMinimumSize(68, 72)
                 b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             pad.addWidget(b, r, c)
+        col1.addStretch(1)
+        gb_ruch = QGroupBox("Ruch")
+        col1.addWidget(gb_ruch)
+        rl = QVBoxLayout(gb_ruch)
+        rl.setContentsMargins(10, 8, 10, 10)
+        rl.setSpacing(8)
         mode_row = QHBoxLayout()
-        left.addLayout(mode_row)
+        mode_row.setSpacing(8)
+        rl.addLayout(mode_row)
         self.rb_drive = QRadioButton("Jazda")
         self.rb_drive.setChecked(True)
         self.rb_step = QRadioButton("Krok")
@@ -726,7 +756,8 @@ class CameraTab(QWidget):
         mode_row.addWidget(self.rb_step)
         mode_row.addStretch(1)
         row = QHBoxLayout()
-        left.addLayout(row)
+        row.setSpacing(8)
+        rl.addLayout(row)
         row.addWidget(QLabel("Szybkosc:"))
         self.sl_speed = QSlider(Qt.Horizontal)
         self.sl_speed.setRange(0, 24)
@@ -743,7 +774,8 @@ class CameraTab(QWidget):
         self.lb_speed.setFont(f)
         row.addWidget(self.lb_speed)
         row2 = QHBoxLayout()
-        left.addLayout(row2)
+        row2.setSpacing(8)
+        rl.addLayout(row2)
         row2.addWidget(QLabel("Wielkosc kroku:"))
         self.sp_step = QSpinBox()
         self.sp_step.setRange(1, 2000)
@@ -757,27 +789,36 @@ class CameraTab(QWidget):
         f.setPointSize(10)
         self.status.setFont(f)
         self.status.setWordWrap(True)
-        left.addStretch(1)
+        self.status.setTextFormat(Qt.RichText)
+        self.status.setIndent(6)
 
-        # ---- kolumna zoom/focus ----
-        gb_zf = QGroupBox("Zoom / Focus")
+        # ---- kolumna zoom/focus: karty "Zoom" i "Focus" ----
+        col2 = QVBoxLayout()
+        col2.setSpacing(10)
+        root.addLayout(col2, 1)
+        gb_zf = QGroupBox("Zoom")
         gb_zf.setMinimumWidth(280)
-        root.addWidget(gb_zf, 1)
+        col2.addWidget(gb_zf)
         mid = QVBoxLayout(gb_zf)
+        mid.setContentsMargins(10, 8, 10, 10)
+        mid.setSpacing(8)
         zr = QHBoxLayout()
+        zr.setSpacing(8)
         mid.addLayout(zr)
         for label, direction in (("W−", "wide"), ("T+", "tele")):
             b = HoldButton(label, lambda d=direction: self.zoom_hold(d), lambda: self.zoom_stop())
-            b.setMinimumHeight(52)
+            b.setMinimumHeight(60)
             f = b.font()
             f.setPointSize(14)
             f.setBold(True)
             b.setFont(f)
             zr.addWidget(b)
         zr2 = QVBoxLayout()
+        zr2.setSpacing(8)
         mid.addLayout(zr2)
         zr2.addWidget(QLabel("Szybkosc zoom:"))
         zrow = QHBoxLayout()
+        zrow.setSpacing(8)
         zr2.addLayout(zrow)
         self.sl_zspeed = QSlider(Qt.Horizontal)
         self.sl_zspeed.setRange(0, 8)
@@ -789,20 +830,27 @@ class CameraTab(QWidget):
         self.lb_zspeed.setMinimumWidth(30)
         self.sl_zspeed.valueChanged.connect(lambda v: self.lb_zspeed.setText(str(v)))
         zrow.addWidget(self.lb_zspeed)
-        mid.addSpacing(8)
+        col2.addStretch(1)
+        gb_foc = QGroupBox("Focus")
+        col2.addWidget(gb_foc)
+        fl = QVBoxLayout(gb_foc)
+        fl.setContentsMargins(10, 8, 10, 10)
+        fl.setSpacing(8)
         fr = QHBoxLayout()
-        mid.addLayout(fr)
+        fr.setSpacing(8)
+        fl.addLayout(fr)
         for label, direction in (("Near", "near"), ("Far", "far")):
             b = HoldButton(label, lambda d=direction: self.run(self.api.focus_move(d), f"Focus {d}"),
                            lambda: self.run(self.api.stop("focus"), "Stop"))
-            b.setMinimumHeight(48)
+            b.setMinimumHeight(54)
             fr.addWidget(b)
         self.btn_af1 = QPushButton("OnePush AF")
-        self.btn_af1.setMinimumHeight(48)
+        self.btn_af1.setMinimumHeight(54)
         self.btn_af1.clicked.connect(lambda: self.run(self.api.focus_move("onepushaf"), "OnePushAF"))
-        mid.addWidget(self.btn_af1)
+        fl.addWidget(self.btn_af1)
         fr2 = QHBoxLayout()
-        mid.addLayout(fr2)
+        fr2.setSpacing(8)
+        fl.addLayout(fr2)
         fr2.addWidget(QLabel("Tryb focus:"))
         self.cb_focus = QComboBox()
         self.cb_focus.addItems(["auto", "manual"])
@@ -813,15 +861,18 @@ class CameraTab(QWidget):
         self.btn_focus.clicked.connect(lambda: self.run(
             self.api.set_imaging(FocusMode=self.cb_focus.currentText()), "FocusMode"))
         fr2.addWidget(self.btn_focus)
-        mid.addStretch(1)
 
-        # ---- kolumna obraz ----
-        gb_img = QGroupBox("Obraz")
-        root.addWidget(gb_img, 1)
+        # ---- kolumna obraz: karty "Ekspozycja" i "Balans bieli" ----
+        col3 = QVBoxLayout()
+        col3.setSpacing(10)
+        root.addLayout(col3, 1)
+        gb_img = QGroupBox("Ekspozycja")
+        col3.addWidget(gb_img)
         right = QVBoxLayout(gb_img)
-        right.addWidget(self._sec_label("Ekspozycja"))
+        right.setContentsMargins(10, 8, 10, 10)
+        right.setSpacing(8)
         form = QFormLayout()
-        form.setSpacing(4)
+        form.setSpacing(6)
         right.addLayout(form)
         self.cb_exp = QComboBox()
         self.cb_exp.addItems(["auto", "shutter", "iris", "manual"])
@@ -834,13 +885,17 @@ class CameraTab(QWidget):
         self.btn_exp.setProperty("kind", "primary")
         self.btn_exp.setMinimumHeight(36)
         self.btn_exp.clicked.connect(self.apply_exposure)
-        right.addSpacing(4)
+        right.addSpacing(6)
         right.addWidget(self.btn_exp)
-        right.addSpacing(10)
-        right.addWidget(self._sec_label("Balans bieli"))
+        col3.addStretch(1)
+        gb_wb = QGroupBox("Balans bieli")
+        col3.addWidget(gb_wb)
+        wl = QVBoxLayout(gb_wb)
+        wl.setContentsMargins(10, 8, 10, 10)
+        wl.setSpacing(8)
         form2 = QFormLayout()
-        form2.setSpacing(4)
-        right.addLayout(form2)
+        form2.setSpacing(6)
+        wl.addLayout(form2)
         self.cb_wb = QComboBox()
         self.cb_wb.addItems(["auto", "indoor", "outdoor", "onepushwb", "atw", "manual"])
         form2.addRow("Tryb:", self.cb_wb)
@@ -848,7 +903,8 @@ class CameraTab(QWidget):
         self.sl_cr = self._slider(form2, "R gain:", 0, 255)
         self.sl_wboff = self._slider(form2, "Offset:", 0, 14)
         wbrow = QHBoxLayout()
-        right.addLayout(wbrow)
+        wbrow.setSpacing(8)
+        wl.addLayout(wbrow)
         self.btn_wb = QPushButton("Zastosuj WB")
         self.btn_wb.setProperty("kind", "primary")
         self.btn_wb.setMinimumHeight(36)
@@ -860,13 +916,7 @@ class CameraTab(QWidget):
         wbrow.addWidget(self.btn_wb1)
         self.btn_reload = QPushButton("Odczytaj z kamery")
         self.btn_reload.clicked.connect(self.refresh_all)
-        right.addWidget(self.btn_reload)
-        right.addStretch(1)
-
-    def _sec_label(self, text: str) -> QLabel:
-        lb = QLabel(text.upper())
-        lb.setProperty("sec", "1")
-        return lb
+        wl.addWidget(self.btn_reload)
 
     def _slider(self, form, label, lo, hi, fmt=None):
         row = QHBoxLayout()
@@ -983,12 +1033,25 @@ class CameraTab(QWidget):
     def status_text(self, pt: dict) -> str:
         abspt = pt.get("AbsolutePTZF", "")
         parts = abspt.split(",")
-        extra = ""
-        if len(parts) >= 3:
-            extra = (f"Pan {fmt_deg(pan_deg(parts[0]))} Tilt {fmt_deg(tilt_deg(parts[1]))} "
-                     f"Zoom ~{zoom_x(parts[2]):.1f}x")
         st = pt.get("PtzfStatus", "")
-        return f"{extra} | {st}" if extra else f"PTZF={abspt} | {st}"
+        vals = [s.strip() for s in st.split(",") if s.strip()]
+        uniq = list(dict.fromkeys(vals))
+        st_txt = ", ".join(uniq) if uniq else "-"
+
+        def dim(t):
+            return f"<span style='color:#8b9198'>{t}</span>"
+
+        def val(t):
+            return f"<span style='color:#ffd9a0'>{t}</span>"
+
+        if len(parts) >= 3:
+            txt = (f"{dim('Pan')} {val(fmt_deg(pan_deg(parts[0])))}&nbsp;&nbsp;"
+                   f"{dim('Tilt')} {val(fmt_deg(tilt_deg(parts[1])))}&nbsp;&nbsp;"
+                   f"{dim('Zoom')} {val(f'~{zoom_x(parts[2]):.1f}x')}"
+                   f"&nbsp;&nbsp;{dim('|')}&nbsp;&nbsp;{dim(st_txt)}")
+        else:
+            txt = f"{dim('PTZF')} {val(abspt)}&nbsp;&nbsp;{dim('|')}&nbsp;&nbsp;{dim(st_txt)}"
+        return txt
 
     def quick_frame(self, num: int):
         fr = self.frames[num - 1] if 1 <= num <= len(self.frames) else None

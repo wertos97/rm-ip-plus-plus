@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import atexit
 import datetime
+from concurrent.futures import ThreadPoolExecutor
 
-from PySide6.QtCore import Qt, QThread, Signal, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEvent, Qt, QThread, Signal, QTimer
+from PySide6.QtGui import QColor, QCursor
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QApplication, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
     QSplitter, QStatusBar, QTableWidget, QTableWidgetItem, QTabWidget,
     QVBoxLayout, QWidget,
@@ -25,6 +26,7 @@ try:
     from . import diagnostics as diag
     from . import subnet_bridge as bridge
     from . import edge_view as ev
+    from . import sony_csv, sony_udp
     from .sony_client import DEFAULT_USER, DEFAULT_PASSWORD
 except ImportError:
     import net_manager as nm  # noqa: E402
@@ -33,7 +35,27 @@ except ImportError:
     import diagnostics as diag  # noqa: E402
     import subnet_bridge as bridge  # noqa: E402
     import edge_view as ev  # noqa: E402
+    import sony_csv  # noqa: E402
+    import sony_udp  # noqa: E402
     from sony_client import DEFAULT_USER, DEFAULT_PASSWORD  # noqa: E402
+
+
+class _CenterHint(QLabel):
+    """Szary napis wysrodkowany na pustej tabeli - rozciaga sie z viewportem."""
+
+    def __init__(self, text: str, viewport):
+        super().__init__(text, viewport)
+        self.setAlignment(Qt.AlignCenter)
+        self.setWordWrap(True)
+        self.setStyleSheet("color:#6f757c; font-size:12px; background:transparent;")
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setGeometry(viewport.rect())
+        viewport.installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.Type.Resize:
+            self.setGeometry(obj.rect())
+        return False
 
 
 class ScanWorker(QThread):
@@ -55,7 +77,7 @@ class ScanWorker(QThread):
 
     def run(self):
         if self.mode == "fast":
-            # faza 1/3: kandydaci z ARP (szybkie trafienia najpierw)
+            # faza 1/4: kandydaci z ARP (szybkie trafienia najpierw)
             try:
                 self.step.emit("Skan: tabela ARP...")
                 self.prog.emit(3, 100)
@@ -65,7 +87,7 @@ class ScanWorker(QThread):
             if self._stop:
                 self.done.emit([])
                 return
-            # faza 2/3: SSDP (multicast, ~2 s)
+            # faza 2/4: SSDP (multicast, ~2 s)
             try:
                 self.step.emit("Skan: nasluch SSDP/UPnP...")
                 self.prog.emit(8, 100)
@@ -78,16 +100,46 @@ class ScanWorker(QThread):
             # znane + ARP najpierw (trafienia od razu), domyslne na koncu
             targets = list(dict.fromkeys(
                 list(self.known) + arp + ssdp + list(disc.LIKELY_DEFAULTS)))
+            # faza 3/4: sondowanie TCP + rownolegle UDP ENQ:network (52380)
             self.step.emit(f"Skan: sondowanie ({len(targets)} adresow)...")
-            out = disc.probe_many(
-                targets, self.user, self.password,
-                progress=lambda d, t: (self.prog.emit(12 + 88 * d // max(1, t), 100),
-                                       self.step.emit(f"Skan: {d}/{t}...")))
+            with ThreadPoolExecutor(max_workers=1) as uex:
+                fut_udp = self._start_udp(uex)
+                out = disc.probe_many(
+                    targets, self.user, self.password,
+                    progress=lambda d, t: (self.prog.emit(12 + 88 * d // max(1, t), 100),
+                                           self.step.emit(f"Skan: {d}/{t}...")))
+                out = disc.merge_udp(out, self._udp_result(fut_udp))
         else:
-            out = disc.scan_subnet(self.cidr, self.user, self.password,
-                                   progress=lambda d, t: self.prog.emit(d, t),
-                                   stop_flag=lambda: self._stop)
+            self.step.emit("Skan: UDP ENQ:network (52380) rownolegle...")
+            with ThreadPoolExecutor(max_workers=1) as uex:
+                fut_udp = self._start_udp(uex)
+                out = disc.scan_subnet(self.cidr, self.user, self.password,
+                                       progress=lambda d, t: self.prog.emit(d, t),
+                                       stop_flag=lambda: self._stop)
+                out = disc.merge_udp(out, self._udp_result(fut_udp))
         self.done.emit(out)
+
+    def _start_udp(self, ex: ThreadPoolExecutor):
+        """UDP ENQ:network (52380) - rownolegle z TCP, znajduje tez kamery
+        z innym IP w tym samym segmencie L2."""
+        try:
+            homes = bridge.guess_homes([{"ip": ip} for ip in self.known])
+            extra = [h + ".255" for h in homes]
+        except Exception:
+            extra = []
+        try:
+            return ex.submit(disc.udp_discover, 2.0, extra,
+                             lambda s: self.step.emit("Skan: " + str(s)))
+        except Exception:
+            return None
+
+    def _udp_result(self, fut) -> list[dict]:
+        if fut is None:
+            return []
+        try:
+            return fut.result(timeout=3.0) or []
+        except Exception:
+            return []
 
 
 class MainWindow(QMainWindow):
@@ -105,8 +157,11 @@ class MainWindow(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
         v = QVBoxLayout(root)
+        v.setContentsMargins(12, 10, 12, 10)
+        v.setSpacing(10)
 
         top = QHBoxLayout()
+        top.setSpacing(8)
         v.addLayout(top)
         self.btn_fast = QPushButton("Skanuj")
         self.btn_fast.setMinimumHeight(32)
@@ -118,6 +173,7 @@ class MainWindow(QMainWindow):
         self.btn_stop.setVisible(False)
         top.addWidget(self.btn_stop)
         self.lbl = QLabel("Skanowanie startowe...")
+        self.lbl.setStyleSheet("color: #9aa0a6;")
         self.lbl.setWordWrap(True)
         top.addWidget(self.lbl, 1)
         self.prog = QProgressBar()
@@ -137,8 +193,8 @@ class MainWindow(QMainWindow):
         self.adv = QWidget()
         self.adv.setObjectName("adv")
         adv_lay = QVBoxLayout(self.adv)
-        adv_lay.setContentsMargins(12, 10, 12, 10)
-        adv_lay.setSpacing(8)
+        adv_lay.setContentsMargins(14, 12, 14, 12)
+        adv_lay.setSpacing(10)
         v.addWidget(self.adv)
         ar1 = QHBoxLayout()
         adv_lay.addLayout(ar1)
@@ -156,7 +212,7 @@ class MainWindow(QMainWindow):
         ar1.addStretch(1)
         ar2 = QHBoxLayout()
         adv_lay.addLayout(ar2)
-        ar2.addWidget(QLabel("Login do kamer:"))
+        ar2.addWidget(QLabel("Login do kamery:"))
         self.e_user = QLineEdit(self.user)
         self.e_user.setMaximumWidth(110)
         ar2.addWidget(self.e_user)
@@ -169,17 +225,19 @@ class MainWindow(QMainWindow):
         self.btn_diag.clicked.connect(self.on_diag)
         ar2.addWidget(self.btn_diag)
         self.net_lbl = QLabel()
-        self.net_lbl.setStyleSheet("color: gray;")
+        self.net_lbl.setStyleSheet("color: #9aa0a6;")
         ar2.addWidget(self.net_lbl, 1)
         self.update_net_label()
         self.adv.setVisible(False)
 
         split = QSplitter(Qt.Horizontal)
+        split.setHandleWidth(6)
         v.addWidget(split, 1)
 
         left = QWidget()
         lv = QVBoxLayout(left)
         lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(8)
         devrow = QHBoxLayout()
         lv.addLayout(devrow)
         self.dev_title = QLabel("Urzadzenia")
@@ -191,6 +249,10 @@ class MainWindow(QMainWindow):
         devrow.addStretch(1)
         self.cam_table = QTableWidget(0, 5)
         self.cam_table.setHorizontalHeaderLabels(["IP", "Model", "HTTP", "VISCA", "Panel"])
+        for i in (0, 1):
+            it = self.cam_table.horizontalHeaderItem(i)
+            if it is not None:
+                it.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         hh = self.cam_table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(1, QHeaderView.Stretch)
@@ -209,8 +271,15 @@ class MainWindow(QMainWindow):
         self.cam_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.cam_table.customContextMenuRequested.connect(self.dev_menu)
         self.cam_table.doubleClicked.connect(self.open_web_tab)
+        self.cam_empty = _CenterHint(
+            "Brak urzadzen.\n\n"
+            "Kliknij «Skanuj» albo «Dodaj IP...».\n"
+            "Lista pokazuje tylko kamery Sony (HTTP / VISCA / UDP 52380) - "
+            "routery, NAS i inne sprzety z sieci sa pomijane.",
+            self.cam_table.viewport())
         lv.addWidget(self.cam_table, 1)
         devbtn = QHBoxLayout()
+        devbtn.setSpacing(8)
         lv.addLayout(devbtn)
         self.btn_addip = QPushButton("Dodaj IP...")
         self.btn_addip.setToolTip("Recznie dopisz kamere (gdy skan jej nie widzi).")
@@ -220,15 +289,35 @@ class MainWindow(QMainWindow):
         self.btn_all.setToolTip("Otwiera zakladki sterowania dla wszystkich z tabeli.")
         self.btn_all.clicked.connect(self.open_all_tabs)
         devbtn.addWidget(self.btn_all)
+        devbtn2 = QHBoxLayout()
+        devbtn2.setSpacing(8)
+        lv.addLayout(devbtn2)
+        self.btn_udpnet = QPushButton("Sieć kamery (UDP)…")
+        self.btn_udpnet.setToolTip("Zmienia IP/maske/brame/nazwe kamery przez broadcast UDP 52380 "
+                                   "(protokol Sony - dziala tez dla kamery z innej podsieci).")
+        self.btn_udpnet.clicked.connect(self.open_udp_write)
+        devbtn2.addWidget(self.btn_udpnet)
+        self.btn_camtable = QPushButton("Tabela panelu (UDP)…")
+        self.btn_camtable.setToolTip("Odczytuje tabele kamer z panelu RM-IP (ENQ:camtable) "
+                                     "i pozwala eksportowac ja do CSV zgodnego z RM-IP Setup Tool.")
+        self.btn_camtable.clicked.connect(self.open_camtable)
+        devbtn2.addWidget(self.btn_camtable)
+        self.btn_csv = QPushButton("CSV…")
+        self.btn_csv.setToolTip("Eksport/import listy kamer w formacie CSV RM-IP Setup Tool.")
+        self.btn_csv.clicked.connect(self.csv_menu)
+        devbtn2.addWidget(self.btn_csv)
         split.addWidget(left)
 
         right = QWidget()
         rv = QVBoxLayout(right)
+        rv.setContentsMargins(0, 0, 0, 0)
+        rv.setSpacing(8)
         self.ctrl_tabs = QTabWidget()
         self.ctrl_tabs.setTabsClosable(True)
         self.ctrl_tabs.tabCloseRequested.connect(self.close_ctrl_tab)
         rv.addWidget(self.ctrl_tabs, 3)
         row = QHBoxLayout()
+        row.setSpacing(8)
         rv.addLayout(row)
         self.btn_add = QPushButton("Steruj zaznaczona")
         self.btn_add.setToolTip("Otwiera zakladke sterowania VISCA/CGI dla kamery z tabeli.")
@@ -263,13 +352,21 @@ class MainWindow(QMainWindow):
         if known:
             iface = nm.best_bridge_iface()
             if iface:
-                self.log_line(f"Start: odtwarzam most dla znanych {known} na '{iface}'...")
-                try:
-                    ok, msg = nm.ensure_homes_visible(iface, known)
-                except Exception as e:
-                    ok, msg = False, str(e)[:200]
-                self.log_line("Most startowy: " + msg)
-                self.update_net_label()
+                # Most tylko dla nieosiagalnych: IP z biezacej podsieci (np. w sieci
+                # hotelowej router z LIKELY_DEFAULTS) nie moze dostac dodatkowego
+                # adresu na Ethernet - inaczej trasa do wlasnej podsieci sie miesza,
+                # a Internet ma zostac na WiFi.
+                with ThreadPoolExecutor(max_workers=8) as ex:
+                    reach = dict(zip(known, ex.map(nm.tcp_reachable, known)))
+                need = [ip for ip in known if not reach.get(ip)]
+                if need:
+                    self.log_line(f"Start: odtwarzam most dla {need} na '{iface}'...")
+                    try:
+                        ok, msg = nm.ensure_homes_visible(iface, need)
+                    except Exception as e:
+                        ok, msg = False, str(e)[:200]
+                    self.log_line("Most startowy: " + msg)
+                    self.update_net_label()
         self.start_scan("fast")
 
     def toggle_adv(self, on: bool):
@@ -287,7 +384,8 @@ class MainWindow(QMainWindow):
         try:
             bi = nm.best_bridge_iface() or "brak Ethernetu"
             n = len(nm._load_state())
-            self.net_lbl.setText(f"Most auto: {bi} | temp IP: {n} | WiFi: internet")
+            n_txt = str(n) if n else "brak"
+            self.net_lbl.setText(f"Most auto: {bi} | temp IP: {n_txt} | WiFi: internet")
         except Exception:
             pass
 
@@ -379,11 +477,23 @@ class MainWindow(QMainWindow):
         self.btn_fast.setEnabled(True)
         self.cams = sorted(found, key=lambda d: d["ip"])
         self.cam_table.setRowCount(len(self.cams))
+        self.cam_table.setVerticalHeaderLabels([str(i + 1) for i in range(len(self.cams))])
+        for r in range(len(self.cams)):
+            it = self.cam_table.verticalHeaderItem(r)
+            if it is not None:
+                it.setTextAlignment(Qt.AlignCenter)
         for r, c in enumerate(self.cams):
             up = bool(c.get("http"))
             ip_item = QTableWidgetItem(("● " if up else "○ ") + c["ip"])
             ip_item.setForeground(QColor("#8fce8f") if up else QColor("#8a8f96"))
-            ip_item.setToolTip(c["ip"])
+            tip = c["ip"]
+            u = c.get("udp") or {}
+            if u:
+                tip += (f"\nUDP 52380: {u.get('model') or '?'} · MAC {u.get('mac') or '?'} · "
+                        f"FW {u.get('softversion') or '?'} · WRITE:{u.get('writable') or '?'}")
+            if c.get("note"):
+                tip += "\n" + str(c["note"])
+            ip_item.setToolTip(tip)
             self.cam_table.setItem(r, 0, ip_item)
             self.cam_table.setItem(r, 1, QTableWidgetItem(str(c.get("model", "?"))))
             for col, ok in ((2, c.get("http")), (3, c.get("visca_52381"))):
@@ -395,6 +505,8 @@ class MainWindow(QMainWindow):
         self.refresh_panel_col()
         self._refresh_tab_labels()
         self.dev_title.setText(f"Urzadzenia ({len(self.cams)})")
+        self.cam_empty.setVisible(not self.cams)
+        self.cam_empty.raise_()
         n = len(found)
         self.lbl.setText(f"Wykryto: {n} · dwuklik = sterowanie")
         self.log_line(f"Skan koniec: {[c['ip'] for c in found]}")
@@ -611,6 +723,157 @@ class MainWindow(QMainWindow):
                f"VISCA 52381={'open' if v else 'closed'}")
         self.log_line(txt.replace("\n", " | "))
         QMessageBox.information(self, "Polaczenie", txt)
+
+    # -- UDP: SET sieci + tabela panelu + CSV (formaty Sony) -----------------
+    def _dev_defaults(self, ip: str) -> dict:
+        """Wartosci do prefillu dialogu UDP z danych skanu (UDP > CGI)."""
+        c = next((x for x in self.cams if x["ip"] == ip), None) or {}
+        u = c.get("udp") or {}
+        net = c.get("network") if isinstance(c.get("network"), dict) else {}
+        writable = None
+        if u:
+            writable = (u.get("writable") or "") == "on"
+        return {"mac": u.get("mac") or "",
+                "ip": c.get("ip", "") or "",
+                "mask": u.get("mask") or "255.255.255.0",
+                "gateway": u.get("gateway") or "",
+                "name": u.get("name") or net.get("CameraName") or "",
+                "writable": writable}
+
+    def open_udp_write(self):
+        try:
+            from .ui_udp import WriteNetDialog
+        except ImportError:
+            from ui_udp import WriteNetDialog  # noqa: E402
+        ip = self.selected_ip()
+        if not ip:
+            QMessageBox.warning(self, "Brak wyboru", "Zaznacz kamere w tabeli.")
+            return
+        dlg = WriteNetDialog(self, defaults=self._dev_defaults(ip), old_ip=ip)
+        dlg.applied.connect(self.on_udp_write_applied)
+        dlg.exec()
+
+    def on_udp_write_applied(self, info: dict):
+        old_ip = (info or {}).get("old_ip") or ""
+        new_ip = (info or {}).get("ip") or ""
+        if new_ip and new_ip != old_ip:
+            try:
+                known = [x for x in self.config.get("known_ips", []) if x != old_ip]
+                if new_ip not in known:
+                    known.append(new_ip)
+                self.config["known_ips"] = known[:20]
+                self.config["open_tabs"] = [new_ip if t == old_ip else t
+                                            for t in self.config.get("open_tabs", [])]
+                cfg.save(self.config)
+            except Exception:
+                pass
+        self.log_line(f"UDP SET: ACK potwierdzone, {old_ip} -> {new_ip}.")
+        QMessageBox.information(
+            self, "UDP SET",
+            f"Kamera potwierdzila zmiane (ACK):\n\n  {old_ip}  ->  {new_ip}\n\n"
+            "Odswiezam liste urzadzen. Jesli nowy adres jest poza podsiecia "
+            "komputera, uzyj mostu (Zaawansowane > Dobuduj most do nieosiagalnych).")
+        QTimer.singleShot(900, lambda: self.start_scan("fast"))
+
+    def open_camtable(self):
+        try:
+            from .ui_udp import CamtableDialog
+        except ImportError:
+            from ui_udp import CamtableDialog  # noqa: E402
+        dlg = CamtableDialog(self)
+        dlg.exec()
+
+    def csv_menu(self):
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        a1 = menu.addAction("Eksportuj liste kamer (CSV Sony)...")
+        a2 = menu.addAction("Importuj liste kamer (CSV Sony)...")
+        act = menu.exec(self.btn_csv.mapToGlobal(self.btn_csv.rect().center()))
+        if act == a1:
+            self.export_camera_csv()
+        elif act == a2:
+            self.import_camera_csv()
+
+    def _cam_csv_row(self, c: dict) -> dict:
+        u = c.get("udp") or {}
+        net = c.get("network") if isinstance(c.get("network"), dict) else {}
+        return {"name": u.get("name") or net.get("CameraName") or "",
+                "mac": u.get("mac") or net.get("MACAddress") or net.get("MAC") or "",
+                "ip": c.get("ip", ""),
+                "mask": u.get("mask") or "255.255.255.0",
+                "gateway": u.get("gateway") or "",
+                "version": u.get("softversion") or net.get("SoftVersion") or ""}
+
+    def export_camera_csv(self):
+        if not self.cams:
+            QMessageBox.information(self, "CSV", "Lista urzadzen jest pusta.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Eksport listy kamer (CSV Sony)", "rmip_cameras.csv",
+            "CSV (*.csv);;Wszystkie pliki (*)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                f.write(sony_csv.camera_csv_text([self._cam_csv_row(c) for c in self.cams]))
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "CSV", f"Nie udalo sie zapisac: {e}")
+            return
+        self.log_line(f"CSV: zapisano {len(self.cams)} kamer -> {path}")
+        QMessageBox.information(self, "CSV", f"Zapisano {len(self.cams)} wierszy:\n{path}")
+
+    def import_camera_csv(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import listy kamer (CSV Sony)", "", "CSV (*.csv);;Wszystkie pliki (*)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+                text = f.read()
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "CSV", f"Nie udalo sie wczytac: {e}")
+            return
+        parsed = sony_csv.parse_camera_csv(text)
+        rows = parsed["rows"]
+        if parsed["warnings"]:
+            extra = ("" if len(parsed["warnings"]) <= 12
+                     else f"\n... i {len(parsed['warnings']) - 12} wiecej")
+            QMessageBox.warning(self, "CSV - ostrzezenia",
+                                "\n".join(parsed["warnings"][:12]) + extra)
+        if not rows:
+            QMessageBox.warning(self, "CSV", "Plik nie zawiera wierszy kamer.")
+            return
+        by_ip = {c["ip"]: c for c in self.cams}
+        ips: list[str] = []
+        added = 0
+        for r in rows:
+            ip = (r.get("ip") or "").strip()
+            if not sony_udp.is_ipv4(ip):
+                continue
+            ips.append(ip)
+            cam = by_ip.get(ip)
+            if cam is not None:
+                cam.setdefault("csv", r)
+                continue
+            cam = {"ip": ip, "http": False, "http_port": 0, "visca_52381": False,
+                   "model": r.get("name") or "?", "csv": r,
+                   "note": f"z CSV: MAC {r.get('mac') or '?'} FW {r.get('version') or '?'}"}
+            self.cams.append(cam)
+            by_ip[ip] = cam
+            added += 1
+        try:
+            known = list(dict.fromkeys(list(self.config.get("known_ips", [])) + ips))[:40]
+            self.config["known_ips"] = known
+            cfg.save(self.config)
+        except Exception:
+            pass
+        self.on_scan_done(list(self.cams))
+        self.log_line(f"CSV: wczytano {len(rows)} wierszy ({added} nowych na liscie).")
+        QMessageBox.information(
+            self, "CSV",
+            f"Wczytano {len(rows)} kamer z pliku.\nNowych na liscie: {added}.\n"
+            "Uruchamiam skan, zeby potwierdzic je w sieci.")
+        self.start_scan("fast")
 
 
 def run():

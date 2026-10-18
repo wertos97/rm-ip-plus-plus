@@ -50,4 +50,4 @@ def env_report() -> str:
         lines.append(f"host: {hn} -> {socket.gethostbyname(hn)}")
     except Exception as e:
         lines.append(f"host blad: {e}")
-    return "\n".join(lines)
+    return " | ".join(lines)

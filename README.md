@@ -5,7 +5,17 @@ obraz (ekspozycja/WB) + most sieciowy WiFi+Ethernet. Zero konfiguracji IP.
 
 ## Co potrafi
 - **Wykrywanie kamer**: ARP + SSDP + znane IP + zakres CIDR, przycisk Stop,
-  kolumna statusu i modelu (np. `SRG-X400 (CAM2)`).
+  kolumna statusu i modelu (np. `SRG-X400 (CAM2)`). Rownolegle leci
+  **broadcast UDP 52380** (protokol Sony `ENQ:network`) - kamera z adresem
+  z innej podsieci tez odpowie (dokladnie jak "Auto IP Setup").
+- **Sieć kamery (UDP)**: zmiana IP/maski/bramy/nazwy kamery przez broadcast
+  (`MAC:<mac> ...` + ACK/NAK z MAC w cudzyslowie) - dziala bez zmiany IP karty,
+  nawet gdy kamera ma adres poza podsiecia komputera. Wymaga WRITE:on w kamerze.
+- **Tabela panelu RM-IP (UDP)**: `ENQ:camtable1..4` czyta tabele kamer z panelu
+  (112 slotow Group1-1..Group7-16), podglad slotow + eksport/import CSV w formacie
+  RM-IP Setup Tool.
+- **CSV (format Sony)**: eksport/import listy kamer (6 kolumn) oraz tabeli panelu
+  (`;Group No-Camera No,...` + 112 wierszy `GroupG-C,...`) - zgodne z oryginalem.
 - **Most sieciowy**: WiFi z internetem zostaje NIETKNIETE; na Ethernet
   dokladane jest tylko secondary IP (`SkipAsSource`, bez bramy, UAC),
   wiec ruch do kamer idzie kablem, a Internet dalej po WiFi.
@@ -31,6 +41,9 @@ obraz (ekspozycja/WB) + most sieciowy WiFi+Ethernet. Zero konfiguracji IP.
 ```
 python tests/test_basic.py    # szybki test modulow
 python mock_sony_cam.py       # atrapa 127.0.0.1:8080 + :52381
+python tools/udp_probe.py     # nasluch/diagnostyka UDP 52380
+python tools/udp_probe.py --camtable            # tabela z panelu RM-IP
+python tools/udp_probe.py --write --mac ... --ip ... --name ...   # SET sieci
 ```
 
 ## Uwagi
@@ -42,6 +55,9 @@ python mock_sony_cam.py       # atrapa 127.0.0.1:8080 + :52381
 ## Pliki
 - `src/ui_main.py` - okno glowne, tabela kamer, skan (ScanWorker), motyw
 - `src/ui_control.py` - panel sterowania: PTZ, presety, kadry, obraz
+- `src/ui_udp.py` - okna UDP: SET sieci kamery + tabela panelu RM-IP + CSV
+- `src/sony_udp.py` - protokol UDP 52380 (wykrywanie, SET sieci, camtable)
+- `src/sony_csv.py` - CSV zgodne z RM-IP Setup Tool (lista kamer + tabela panelu)
 - `src/cam_control.py` - CGI API kamery (ruch, pozycje, presety, imaging)
 - `src/sony_client.py` - klient HTTP digest (naglowki przegladarki)
 - `src/discovery.py` - ARP/SSDP/probe rownolegly z postepem

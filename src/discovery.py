@@ -26,6 +26,49 @@ def tcp_open(ip: str, port: int, timeout: float = 0.6, retries: int = 2) -> bool
     return False
 
 
+def udp_discover(timeout: float = 2.0, extra_broadcasts=(), log=None) -> list[dict]:
+    """Sony UDP 52380 (ENQ:network) - znajdzie kamery, nawet z innym IP (L2)."""
+    try:
+        from . import sony_udp
+    except ImportError:
+        import sony_udp  # noqa: E402
+    return sony_udp.discover(timeout=timeout, extra_broadcasts=extra_broadcasts,
+                             log=log)
+
+
+def merge_udp(found: list[dict], udp_hits: list[dict]) -> list[dict]:
+    """Dolacza kamery widziane przez UDP do wyniku sondy TCP.
+
+    Kamera z obcej podsieci nie odpowie na TCP, ale broadcast UDP ja znajdzie -
+    trafia na liste z http=False i notatka, zeby nie zniknela z wynikow.
+    """
+    out = list(found)
+    by_ip = {c["ip"]: c for c in out}
+    for u in udp_hits:
+        ip = u.get("ip") or u.get("src_ip")
+        if not ip:
+            continue
+        label = u.get("model") or ""
+        name = u.get("name") or ""
+        if name and name not in label:
+            label = f"{label} ({name})" if label else name
+        if ip in by_ip:
+            cam = by_ip[ip]
+            cam["udp"] = u
+            if cam.get("model", "?") in ("?", "") and label:
+                cam["model"] = label
+            continue
+        cam = {"ip": ip, "http": False, "http_port": 0, "visca_52381": False,
+               "model": label or "?", "udp": u}
+        mac = u.get("mac") or ""
+        cam["note"] = (f"UDP 52380: MAC {mac} - brak potwierdzenia HTTP "
+                       "(sprawdz podsiec/trase)") if mac else \
+                      "UDP 52380 - brak potwierdzenia HTTP (sprawdz podsiec/trase)"
+        out.append(cam)
+        by_ip[ip] = cam
+    return sorted(out, key=lambda d: d["ip"])
+
+
 def probe_ip(ip: str, user: str = "admin", password: str = "admin",
              cgi_timeout: float = 2.5) -> dict | None:
     """Szybki probe: TCP rownolegle krotko, CGI z krotszym timeoutem (skan nie wiesza sie)."""
@@ -50,16 +93,33 @@ def probe_ip(ip: str, user: str = "admin", password: str = "admin",
             info["model"] = model
             info["network"] = net
         else:
-            # fallback: tytul strony glownej (dziala bez logowania, np. 'Sony Network Camera')
+            # Sony API nie potwierdzilo kamery. Zanim uznamy urzadzenie za kamere,
+            # szukamy sladow Sony/kamery w tytule strony i naglowkach HTTP - inaczej
+            # router/NAS/drukarka z otwartym HTTP (np. MikroTik "RouterOS router
+            # configuration page") trafialyby na liste "Urzadzenia".
+            ident = ""
             try:
                 import re
                 import requests
-                r = requests.get(f"http://{ip}:{http_port}/", timeout=cgi_timeout)
-                m = re.search(r"<title>(.*?)</title>", r.text, re.I | re.S)
-                info["model"] = m.group(1).strip()[:60] if m else "?"
+                r = requests.get(f"http://{ip}:{http_port}/", timeout=cgi_timeout,
+                                 allow_redirects=True)
+                m = re.search(r"<title>(.*?)</title>", r.text[:8000], re.I | re.S)
+                title = m.group(1).strip()[:60] if m else ""
+                hdrs = " ".join(f"{k} {v}" for k, v in r.headers.items())
+                if re.search(r"sony|srg|snc|ipela|camera|kamera|ptz|visca",
+                             f"{title} {hdrs}", re.I):
+                    ident = title or "kamera (HTTP)"
             except Exception:
                 pass
-            if isinstance(net, str) and net:
+            if ident:
+                info["model"] = ident
+            elif visca:
+                # brak potwierdzenia po HTTP, ale otwarty port VISCA = prawie na pewno kamera
+                info["model"] = "kamera (VISCA 52381)"
+                info["note"] = "HTTP nie potwierdzil modelu - sprawdz port HTTP w kamerze"
+            else:
+                return None  # to nie kamera - nie zasmiecaj listy urzadzen
+            if isinstance(net, str) and net and not info.get("note"):
                 info["note"] = str(net)[:150]
     elif visca:
         info["note"] = "VISCA:52381 otwarty, HTTP zamkniete (sprawdz port HTTP w kamerze)"

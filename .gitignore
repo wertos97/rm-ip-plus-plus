@@ -16,3 +16,4 @@ docs/
 *.log
 thumbs/
 .screenshots/
+ui_shots*/
