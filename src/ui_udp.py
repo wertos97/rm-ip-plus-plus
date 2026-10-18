@@ -143,7 +143,7 @@ class WriteNetDialog(QDialog):
             QMessageBox.warning(self, "Name", "Name: 1-16 ASCII characters (e.g. CAM2).")
             return
         warn = (f"Camera {mac} will change its network settings to:\n\n"
-                f"    IP:     {ip}\n    Maska:  {mask}\n    Brama:  {gw or '(empty)'}\n"
+                f"    IP:      {ip}\n    Mask:    {mask}\n    Gateway: {gw or '(empty)'}\n"
                 f"    Name:    {name}\n\n"
                 "The camera will lose its old address after the ACK.\n\nContinue?")
         ans = QMessageBox.warning(self, "Change the camera address", warn,
@@ -287,7 +287,7 @@ class CamtableDialog(QDialog):
                 f"{m.get('src_ip', '?'):>15}  {m.get('kind', '?')}  "
                 f"{_raw_text(m.get('raw') or b'')}")
         if res.get("error"):
-            self.head.setText(f"Błąd: {res['error']}")
+            self.head.setText(f"Error: {res['error']}")
             return
         slots: dict[int, dict] = {}
         for p in pages:
@@ -303,7 +303,7 @@ class CamtableDialog(QDialog):
         filled = sum(1 for e in slots.values() if e.get("mac") or e.get("ip") or e.get("name"))
         panels = ", ".join(sorted({p.get("panel_mac") or p.get("src_ip") or "?"
                                    for p in pages}))
-        self.head.setText(f"Panel: {panels} · wypełnione: {filled}")
+        self.head.setText(f"Panel: {panels} · filled: {filled}")
 
     def _fill(self, slots: dict):
         rows = sorted(slots.items())
@@ -338,10 +338,10 @@ class CamtableDialog(QDialog):
             with open(path, "w", encoding="utf-8", newline="") as f:
                 f.write(sony_csv.table_csv_text(slots))
         except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "CSV", f"Nie udało się zapisać: {e}")
+            QMessageBox.warning(self, "CSV", f"Could not save: {e}")
             return
-        self.raw.appendPlainText(f"[CSV] zapisano tabelę -> {path}")
-        QMessageBox.information(self, "CSV", f"Zapisano tabelę:\n{path}")
+        self.raw.appendPlainText(f"[CSV] table saved -> {path}")
+        QMessageBox.information(self, "CSV", f"Saved table:\n{path}")
 
     def import_csv(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -352,13 +352,13 @@ class CamtableDialog(QDialog):
             with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
                 text = f.read()
         except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "CSV", f"Nie udało się wczytać: {e}")
+            QMessageBox.warning(self, "CSV", f"Could not load: {e}")
             return
         parsed = sony_csv.parse_table_csv(text)
         rows = parsed["rows"]
         if parsed["warnings"]:
             extra = "" if len(parsed["warnings"]) <= 12 else \
-                f"\n... i {len(parsed['warnings']) - 12} więcej"
+                f"\n... and {len(parsed['warnings']) - 12} more"
             QMessageBox.warning(self, "CSV — warnings",
                                 "\n".join(parsed["warnings"][:12]) + extra)
         if not rows:
@@ -368,5 +368,5 @@ class CamtableDialog(QDialog):
         self._slots = {r["slot"]: r for r in rows}
         self._fill(self._slots)
         filled = sum(1 for r in rows if r.get("mac") or r.get("ip") or r.get("name"))
-        self.head.setText(f"Podgląd z pliku: {path} · wierszy: {len(rows)}, "
-                          f"wypełnionych: {filled}")
+        self.head.setText(f"Preview from file: {path} · rows: {len(rows)}, "
+                          f"filled: {filled}")

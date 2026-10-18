@@ -61,7 +61,7 @@ def merge_udp(found: list[dict], udp_hits: list[dict]) -> list[dict]:
         cam = {"ip": ip, "http": False, "http_port": 0, "visca_52381": False,
                "model": label or "?", "udp": u}
         mac = u.get("mac") or ""
-        cam["note"] = (f"UDP 52380: MAC {mac} - brak potwierdzenia HTTP "
+        cam["note"] = (f"UDP 52380: MAC {mac} - no HTTP confirmation "
                        "(check subnet/route)") if mac else \
                       "UDP 52380 - no HTTP confirmation (check subnet/route)"
         out.append(cam)

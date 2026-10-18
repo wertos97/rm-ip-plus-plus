@@ -1,13 +1,31 @@
-# Budowanie RM IP++ na Windows (uruchom w PowerShell jako Administrator)
-pip install -r requirements.txt
-# szybki test bez kamery:
+# Build RM IP++ for Windows (PowerShell; admin not required).
+# Output: dist/RMIPpp/RMIPpp.exe (onedir folder, no Python needed on target PC).
+
+$ErrorActionPreference = "Stop"
+Set-Location $PSScriptRoot
+
+Write-Host "== deps =="
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt pyinstaller
+
+Write-Host "== tests =="
 python tests/test_basic.py
-# exe (duze przez WebEngine ~150-250 MB):
-pyinstaller --noconfirm --windowed --name "RMIPpp" `
-  --add-data "README.md;." `
-  --collect-all PySide6 `
+
+Write-Host "== assets =="
+python tools/make_ico.py
+python tools/make_version_info.py
+
+Write-Host "== pyinstaller =="
+pyinstaller --noconfirm --clean --windowed --name "RMIPpp" `
+  --paths "src" `
+  --icon "assets/icon.ico" `
+  --add-data "assets;assets" `
+  --version-file "build/version_info.txt" `
   main.py
-# Wynik: dist/RMIPpp/RMIPpp.exe
-# Regula firewall dla VISCA (raz, jako admin):
-# New-NetFirewallRule -DisplayName "RM IP++ VISCA 52381" -Direction Inbound -LocalPort 52381 -Protocol TCP -Action Allow
-# New-NetFirewallRule -DisplayName "RM IP++ VISCA 52381 UDP" -Direction Inbound -LocalPort 52381 -Protocol UDP -Action Allow
+
+Write-Host ""
+Write-Host "Done: $PSScriptRoot\dist\RMIPpp\RMIPpp.exe"
+Write-Host "Copy the whole dist\RMIPpp folder to the target machine."
+Write-Host ""
+Write-Host "Optional firewall rules (run once as admin) if discovery replies are blocked:"
+Write-Host '  New-NetFirewallRule -DisplayName "RM IP++ UDP 52380" -Direction Inbound -LocalPort 52380 -Protocol UDP -Action Allow'

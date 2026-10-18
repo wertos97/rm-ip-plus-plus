@@ -1,6 +1,7 @@
-"""Test mobilnej strony kamery (sv.html) w silniku aplikacji z UA iPhone."""
-import sys, time
-sys.path.insert(0, "src")
+"""Test the camera mobile page (sv.html) in the app engine with an iPhone UA."""
+import sys, os, time
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "src"))
 from PySide6.QtWidgets import QApplication
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineProfile

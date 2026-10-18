@@ -80,7 +80,7 @@ for sec, rows in [("EXPOSURE", [("Tryb", "manual"), ("Iris", "20  F3.1"),
     v.addWidget(g)
 row = QHBoxLayout()
 v.addLayout(row)
-for t in ("Zastosuj", "OnePush", "Odczytaj"):
+for t in ("Apply", "OnePush", "Read"):
     row.addWidget(QPushButton(t))
 v.addStretch(1)
 w.setStyleSheet(QSS[VAR])

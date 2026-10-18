@@ -5,7 +5,7 @@ Stawia na 127.0.0.1:
   - TCP 52381: fake VISCA (odpowiada ACK 90 41 FF na kazda ramke)
 
 Uzycie:
-  python mock_sony_cam.py
+  python tools/mock_sony_cam.py
 Potem w RM IP++: CIDR/skan reczny 127.0.0.1 albo szybki skan po dopisaniu
 127.0.0.1 do LIKELY_DEFAULTS - albo po prostu test E2E ponizej.
 """

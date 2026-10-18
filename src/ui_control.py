@@ -258,8 +258,10 @@ class PresetPanel(QWidget):
         self.btn_recall = QPushButton("Recall")
         self.btn_recall.setCheckable(True)
         self.btn_recall.setChecked(True)
+        self.btn_recall.setToolTip("Recall the preset in the selected slot.")
         self.btn_save = QPushButton("Save")
         self.btn_save.setCheckable(True)
+        self.btn_save.setToolTip("Save the current camera position to the selected slot (overwrites).")
         for b, m in ((self.btn_recall, "recall"), (self.btn_save, "save")):
             b.clicked.connect(lambda _, mm=m: self.set_mode(mm))
             top.addWidget(b)
@@ -268,11 +270,14 @@ class PresetPanel(QWidget):
         self.sp_speed.setRange(1, 25)
         self.sp_speed.setValue(10)
         self.sp_speed.setMaximumWidth(84)
+        self.sp_speed.setToolTip("Recall speed 1-25 (BRC-AM7 sets its own).")
         top.addWidget(self.sp_speed)
         self.btn_clear = QPushButton("Clear slot")
+        self.btn_clear.setToolTip("Clear the preset in the selected slot.")
         self.btn_clear.clicked.connect(self.clear_slot)
         top.addWidget(self.btn_clear)
         self.btn_rename = QPushButton("Rename")
+        self.btn_rename.setToolTip("Name the preset in the selected slot.")
         self.btn_rename.clicked.connect(self.rename_slot)
         top.addWidget(self.btn_rename)
         self.btn_thumbs = QPushButton("Generate thumbnails")
@@ -284,6 +289,7 @@ class PresetPanel(QWidget):
         v.addLayout(nav)
         self.btn_prev = QPushButton("◀ 1-16")
         self.btn_prev.setMinimumWidth(96)
+        self.btn_prev.setToolTip("Previous 16 presets.")
         self.btn_prev.clicked.connect(lambda: self.set_page(self.page - 1))
         nav.addWidget(self.btn_prev)
         self.lb_page = QLabel()
@@ -291,6 +297,7 @@ class PresetPanel(QWidget):
         nav.addWidget(self.lb_page, 1)
         self.btn_next = QPushButton("241-256 ▶")
         self.btn_next.setMinimumWidth(96)
+        self.btn_next.setToolTip("Next 16 presets.")
         self.btn_next.clicked.connect(lambda: self.set_page(self.page + 1))
         nav.addWidget(self.btn_next)
         self.grid = QGridLayout()
@@ -393,7 +400,7 @@ class PresetPanel(QWidget):
         for num in defined:
             ok, msg = self.api.preset_recall(num)
             if not ok:
-                self.log(f"[{self.api.ip}] preset {num}: BLAD {msg[:80]}")
+                self.log(f"[{self.api.ip}] preset {num}: ERROR {msg[:80]}")
                 continue
             # czekaj na idle (max 15 s)
             t0 = time.time()
@@ -407,7 +414,7 @@ class PresetPanel(QWidget):
             name = self.names.get(num, f"Preset{num}")
             ok, msg = self.api.preset_set(num, name, "on")
             still_ok = save_still(self.api, f"still_{num}.jpg") if ok else False
-            self.log(f"[{self.api.ip}] miniaturka {num}: {'OK' if ok else 'ERROR ' + msg[:80]}"
+            self.log(f"[{self.api.ip}] thumbnail {num}: {'OK' if ok else 'ERROR ' + msg[:80]}"
                      + ("" if still_ok else " (bad frame from camera)"))
         # wyczysc cache i przeladuj
         try:
@@ -429,7 +436,7 @@ class PresetPanel(QWidget):
         self._apply_selection()
         if self.mode == "recall":
             ok, msg = self.api.preset_recall(num, self.sp_speed.value())
-            self.log(f"[{self.api.ip}] Preset {num} przywolaj: {'OK' if ok else 'ERROR ' + msg[:100]}")
+            self.log(f"[{self.api.ip}] Preset {num} recall: {'OK' if ok else 'ERROR ' + msg[:100]}")
             if not ok:
                 QMessageBox.warning(self, "Preset", msg[:300])
         else:
@@ -440,7 +447,7 @@ class PresetPanel(QWidget):
                 return
             name = self.names.get(num, f"Preset{num}")
             ok, msg = self.api.preset_set(num, name, "on")
-            self.log(f"[{self.api.ip}] Preset {num} zapisz: {'OK' if ok else 'ERROR ' + msg[:100]}")
+            self.log(f"[{self.api.ip}] Preset {num} save: {'OK' if ok else 'ERROR ' + msg[:100]}")
             if ok:
                 save_still(self.api, f"still_{num}.jpg")  # ostry kadr od razu
                 ok2, names = self.api.preset_list()
@@ -449,7 +456,7 @@ class PresetPanel(QWidget):
 
     def clear_slot(self):
         ok, msg = self.api.preset_clear(self.slot)
-        self.log(f"[{self.api.ip}] Preset {self.slot} wyczysc: {'OK' if ok else 'ERROR ' + msg[:100]}")
+        self.log(f"[{self.api.ip}] Preset {self.slot} clear: {'OK' if ok else 'ERROR ' + msg[:100]}")
         if ok:
             try:
                 import os, tempfile
@@ -470,7 +477,7 @@ class PresetPanel(QWidget):
         if not okd:
             return
         ok, msg = self.api.preset_rename(self.slot, name)
-        self.log(f"[{self.api.ip}] Preset {self.slot} nazwa: {'OK' if ok else 'ERROR ' + msg[:100]}")
+        self.log(f"[{self.api.ip}] Preset {self.slot} name: {'OK' if ok else 'ERROR ' + msg[:100]}")
         if ok:
             self.names[self.slot] = name
             self.reload()
@@ -550,12 +557,15 @@ class FramePanel(QWidget):
         self.btn_recall = QPushButton("Go to")
         self.btn_recall.setCheckable(True)
         self.btn_recall.setChecked(True)
+        self.btn_recall.setToolTip("Move the camera to the stored shot.")
         self.btn_save = QPushButton("Save")
         self.btn_save.setCheckable(True)
+        self.btn_save.setToolTip("Store the current pan/tilt/zoom/focus as a shot.")
         for b, m in ((self.btn_recall, "recall"), (self.btn_save, "save")):
             b.clicked.connect(lambda _, mm=m: self.set_mode(mm))
             top.addWidget(b)
         self.btn_fclear = QPushButton("Clear")
+        self.btn_fclear.setToolTip("Clear the selected shot.")
         self.btn_fclear.clicked.connect(self.clear_frame)
         top.addWidget(self.btn_fclear)
         top.addStretch(1)
@@ -609,7 +619,7 @@ class FramePanel(QWidget):
                 return
             p, t, z, f = fr["ptzf"]
             ok, msg = self.api.absolute_ptzf(p, t, z, f)
-            self.log(f"[{self.api.ip}] Kadr {i + 1} ({fr['name']}): {'OK' if ok else 'ERROR ' + msg[:100]}")
+            self.log(f"[{self.api.ip}] Shot {i + 1} ({fr['name']}): {'OK' if ok else 'ERROR ' + msg[:100]}")
             if not ok:
                 QMessageBox.warning(self, "Shot", msg[:300])
         else:
@@ -768,6 +778,7 @@ class CameraTab(QWidget):
         for direction, label, r, c in DIRS:
             if direction == "home":
                 b = QPushButton("HOME")
+                b.setToolTip("Move to the home position.")
                 f = b.font()
                 f.setPointSize(13)
                 f.setBold(True)
@@ -792,7 +803,9 @@ class CameraTab(QWidget):
         rl.addLayout(mode_row)
         self.rb_drive = QRadioButton("Drive")
         self.rb_drive.setChecked(True)
+        self.rb_drive.setToolTip("The camera moves while a pad button is held (short click = 0.5 s).")
         self.rb_step = QRadioButton("Step")
+        self.rb_step.setToolTip("One precise step per click; hold for continuous movement.")
         mode_row.addWidget(self.rb_drive)
         mode_row.addWidget(self.rb_step)
         mode_row.addStretch(1)
@@ -805,6 +818,7 @@ class CameraTab(QWidget):
         self.sl_speed.setValue(8)
         self.sl_speed.setTickPosition(QSlider.TicksBelow)
         self.sl_speed.setTickInterval(4)
+        self.sl_speed.setToolTip("PTZ speed 0-24 (0 = auto, follows zoom).")
         self.sl_speed.valueChanged.connect(lambda v: self.lb_speed.setText("auto" if v == 0 else str(v)))
         row.addWidget(self.sl_speed, 1)
         self.lb_speed = QLabel("8")
@@ -822,9 +836,10 @@ class CameraTab(QWidget):
         self.sp_step.setRange(1, 2000)
         self.sp_step.setValue(80)
         self.sp_step.setMinimumWidth(90)
+        self.sp_step.setToolTip("Step size in camera units (1-2000).")
         row2.addWidget(self.sp_step)
         row2.addStretch(1)
-        self.status = QLabel("status...")
+        self.status = QLabel("")
         f = self.status.font()
         f.setFamily("Consolas")
         f.setPointSize(10)
@@ -866,6 +881,7 @@ class CameraTab(QWidget):
         self.sl_zspeed.setValue(3)
         self.sl_zspeed.setTickPosition(QSlider.TicksBelow)
         self.sl_zspeed.setTickInterval(2)
+        self.sl_zspeed.setToolTip("Zoom speed 0-8.")
         zrow.addWidget(self.sl_zspeed, 1)
         self.lb_zspeed = QLabel("3")
         self.lb_zspeed.setMinimumWidth(30)
@@ -887,6 +903,7 @@ class CameraTab(QWidget):
             fr.addWidget(b)
         self.btn_af1 = QPushButton("One Push AF")
         self.btn_af1.setMinimumHeight(54)
+        self.btn_af1.setToolTip("Run a single autofocus cycle.")
         self.btn_af1.clicked.connect(self.do_onepush_af)
         fl.addWidget(self.btn_af1)
         fr2 = QHBoxLayout()
@@ -896,9 +913,11 @@ class CameraTab(QWidget):
         self.cb_focus = QComboBox()
         self.cb_focus.addItems(["auto", "manual"])
         self.cb_focus.setMinimumWidth(110)
+        self.cb_focus.setToolTip("Focus mode: auto or manual.")
         fr2.addWidget(self.cb_focus, 1)
         self.btn_focus = QPushButton("Set")
         self.btn_focus.setMaximumWidth(90)
+        self.btn_focus.setToolTip("Send the focus mode to the camera.")
         self.btn_focus.clicked.connect(lambda: self.run(
             self.api.set_focus_mode(self.cb_focus.currentText()), "FocusMode"))
         fr2.addWidget(self.btn_focus)
@@ -925,6 +944,7 @@ class CameraTab(QWidget):
         self.btn_exp = QPushButton("Apply exposure")
         self.btn_exp.setProperty("kind", "primary")
         self.btn_exp.setMinimumHeight(36)
+        self.btn_exp.setToolTip("Send the exposure settings to the camera.")
         self.btn_exp.clicked.connect(self.apply_exposure)
         right.addSpacing(6)
         right.addWidget(self.btn_exp)
@@ -949,13 +969,16 @@ class CameraTab(QWidget):
         self.btn_wb = QPushButton("Apply WB")
         self.btn_wb.setProperty("kind", "primary")
         self.btn_wb.setMinimumHeight(36)
+        self.btn_wb.setToolTip("Send the white balance settings to the camera.")
         self.btn_wb.clicked.connect(self.apply_wb)
         wbrow.addWidget(self.btn_wb)
         self.btn_wb1 = QPushButton("One Push WB")
         self.btn_wb1.setMinimumHeight(36)
+        self.btn_wb1.setToolTip("Run a single white balance cycle.")
         self.btn_wb1.clicked.connect(self.do_onepush_wb)
         wbrow.addWidget(self.btn_wb1)
         self.btn_reload = QPushButton("Read from camera")
+        self.btn_reload.setToolTip("Read the current exposure and white balance from the camera.")
         self.btn_reload.clicked.connect(self.refresh_all)
         wl.addWidget(self.btn_reload)
 
@@ -1193,13 +1216,13 @@ class CameraTab(QWidget):
             return
         p, t, z, f = fr["ptzf"]
         ok, msg = self.api.absolute_ptzf(p, t, z, f)
-        self.log(f"[{self.api.ip}] Szybki kadr {num} ({fr['name']}): {'OK' if ok else 'ERROR ' + msg[:100]}")
+        self.log(f"[{self.api.ip}] Quick shot {num} ({fr['name']}): {'OK' if ok else 'ERROR ' + msg[:100]}")
         if not ok:
             QMessageBox.warning(self, "Shot", msg[:300])
 
     def quick_recall(self, num: int):
         ok, msg = self.api.preset_recall(num)
-        self.log(f"[{self.api.ip}] Szybki preset {num}: {'OK' if ok else 'ERROR ' + msg[:100]}")
+        self.log(f"[{self.api.ip}] Quick preset {num}: {'OK' if ok else 'ERROR ' + msg[:100]}")
         if not ok:
             QMessageBox.warning(self, "Preset", msg[:300])
 
@@ -1207,7 +1230,7 @@ class CameraTab(QWidget):
         for b, n in zip(self.quick_btns, range(1, 7)):
             fr = self.frames[n - 1] if n - 1 < len(self.frames) else None
             nm_ = fr.get("name", "") if isinstance(fr, dict) else ""
-            b.setToolTip(f"Kadr {n}" + (f": {nm_}" if nm_ else " (empty)"))
+            b.setToolTip(f"Shot {n}" + (f": {nm_}" if nm_ else " (empty)"))
         self._mark_quick()
 
     def refresh_all(self):

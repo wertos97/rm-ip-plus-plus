@@ -275,7 +275,7 @@ def ensure_subnet_visible(interface_alias: str, subnet_ip: str = "192.168.0.200"
     base = ".".join(subnet_ip.split(".")[: prefix // 8])
     for a in list_ipv4_addresses():
         if a["alias"] == interface_alias and a["ip"].startswith(base + "."):
-            return True, f"Karta '{interface_alias}' juz widzi {base}.0/{prefix} ({a['ip']})."
+            return True, f"Adapter '{interface_alias}' already sees {base}.0/{prefix} ({a['ip']})."
     return add_temp_ip(interface_alias, subnet_ip, prefix)
 
 
@@ -350,13 +350,13 @@ def tcp_reachable(ip: str, timeout: float = 1.0) -> bool:
 def ensure_reachable(ip: str, prefix: int = 24) -> tuple[bool, str]:
     """Pelny automat: jesli IP osiagalne - nic nie rob; jesli nie - dobuduj most."""
     if tcp_reachable(ip):
-        return True, f"{ip} osiagalne bez zmian."
+        return True, f"{ip} reachable without changes."
     iface = best_bridge_iface()
     if not iface:
-        return False, f"{ip} nieosiagalne i brak fizycznego Ethernetu pod most."
+        return False, f"{ip} unreachable and no physical Ethernet for the bridge."
     ok, msg = ensure_homes_visible(iface, [ip], prefix)
     if not ok:
         return False, msg
     if tcp_reachable(ip, timeout=2.0):
-        return True, f"{ip} osiagalne przez most ({msg})"
-    return False, f"Most dodany ({msg}), ale {ip} nadal nie odpowiada."
+        return True, f"{ip} reachable via the bridge ({msg})"
+    return False, f"Bridge added ({msg}), but {ip} still does not respond."

@@ -9,10 +9,15 @@ from __future__ import annotations
 import atexit
 import datetime
 import os
+import sys
 from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import QEvent, Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QColor, QCursor, QIcon
+try:  # ensures the SVG icon engine plugin is bundled by PyInstaller
+    from PySide6 import QtSvg  # noqa: F401
+except Exception:
+    pass
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
@@ -29,6 +34,7 @@ try:
     from . import edge_view as ev
     from . import sony_csv, sony_udp
     from .sony_client import DEFAULT_USER, DEFAULT_PASSWORD
+    from .version import __version__ as APP_VERSION
 except ImportError:
     import net_manager as nm  # noqa: E402
     import discovery as disc  # noqa: E402
@@ -39,6 +45,7 @@ except ImportError:
     import sony_csv  # noqa: E402
     import sony_udp  # noqa: E402
     from sony_client import DEFAULT_USER, DEFAULT_PASSWORD  # noqa: E402
+    from version import __version__ as APP_VERSION  # noqa: E402
 
 
 class _CenterHint(QLabel):
@@ -68,60 +75,61 @@ ABOUT_HTML = """
   .dim { color: #9aa0a6; }
   .tag { color: #ffd9a0; font-weight: bold; }
 </style>
-<h3>RM IP++ &nbsp;<span class="dim" style="font-size:12px;">program do kamer Sony po sieci IP</span></h3>
-<p>Windows, PySide6. Jedno okno, zakładka na kamerę. Program nie odbiera obrazu wideo &mdash;
-kamera nadaje po SDI/HDMI do miksera. Do kamery wysyła komendy HTTP CGI (Digest) i odczytuje jej stan.</p>
+<h3>RM IP++ &nbsp;<span class="dim" style="font-size:12px;">v{{VERSION}} &middot; Sony IP camera control</span></h3>
+<p>Windows, PySide6. One window, one tab per camera. No video preview &mdash; the camera
+feeds SDI/HDMI to a mixer. The app sends HTTP CGI (Digest) commands and reads camera state.</p>
 
-<h4>FUNKCJE</h4>
+<h4>FEATURES</h4>
 <ul>
-<li><span class="tag">PTZ</span> &mdash; pad 8-kierunkowy + HOME. Jazda: ruch trwa w trakcie
-  przytrzymania (krótki klik = 0,5 s ruchu). Krok: klik = 1 krok (wielkość 1-2000),
-  przytrzymanie = po 0,3 s ruch ciągły. Prędkość 0-24 (0 = auto wg zoomu).</li>
-<li><span class="tag">Zoom / Focus</span> &mdash; W-/T+ (prędkość 0-8); Near/Far,
-  OnePush AF, tryb auto/manual.</li>
-<li><span class="tag">Kadry 1-16 + szybkie 1-6</span> &mdash; zapis i przywołanie
-  wyłącznie pan/tilt/zoom/focus (AbsolutePTZF); przyciski 1-6 podświetlają kadr
-  zgodny z bieżącą pozycją kamery.</li>
-<li><span class="tag">Presety kamery</span> &mdash; siatka 1-256 (BRC-AM7: 1-100):
-  przywołanie, zapis, kasowanie, nazwy, miniaturki z kadru kamery.</li>
-<li><span class="tag">Obraz</span> &mdash; ekspozycja (tryb, przysłona, gain, migawka,
-  kompensacja) i balans bieli (tryb, wzmocnienia, offset); wartości w jednostkach
-  kamery (F, dB / EV, 1/…, klatki).</li>
-<li><span class="tag">Sieć</span> &mdash; wykrywanie kamer (ARP, SSDP, UDP 52380);
-  zmiana IP / maski / bramy / nazwy przez UDP (SET + ACK/NAK); odczyt tabeli slotów
-  panelu RM-IP500; import/eksport CSV w formacie Sony.</li>
-<li><span class="tag">Log</span> &mdash; komendy, odpowiedzi i błędy na dole okna głównego.</li>
+<li><span class="tag">PTZ</span> &mdash; 8-way pad + HOME. Drive: moves while held
+  (short click = 0.5 s). Step: click = one step (size 1-2000), hold = continuous
+  after 0.3 s. Speed 0-24 (0 = auto, follows zoom).</li>
+<li><span class="tag">Zoom / Focus</span> &mdash; W-/T+ (speed 0-8); Near/Far,
+  One Push AF, auto/manual mode.</li>
+<li><span class="tag">Shots 1-16 + quick 1-6</span> &mdash; store and recall
+  pan/tilt/zoom/focus only (AbsolutePTZF); buttons 1-6 light up the shot
+  matching the current camera position.</li>
+<li><span class="tag">Camera presets</span> &mdash; grid 1-256 (BRC-AM7: 1-100):
+  recall, save, clear, names, thumbnails taken from the camera frame.</li>
+<li><span class="tag">Image</span> &mdash; exposure (mode, iris, gain, shutter,
+  compensation) and white balance (mode, gains, offset); values in camera units
+  (F, dB / EV, 1/..., frames).</li>
+<li><span class="tag">Network</span> &mdash; camera discovery (ARP, SSDP, UDP 52380);
+  IP / mask / gateway / name change over UDP (SET + ACK/NAK); RM-IP500 panel slot
+  table read; Sony-format CSV import/export.</li>
+<li><span class="tag">Log</span> &mdash; commands, replies and errors at the bottom
+  of the main window.</li>
 </ul>
 
-<h4>MODELE</h4>
+<h4>MODELS</h4>
 <ul>
-<li><span class="tag">SRG-X400 / BRC-X400</span> &mdash; komendy zweryfikowane na SRG-X400
-  (HTTP CGI z digest auth, port 80).</li>
-<li><span class="tag">BRC-AM7</span> &mdash; mapowanie wg Sony &bdquo;CGI Command List&rdquo; v2.0;
-  model rozpoznawany przez inq=viewermode. Zestaw komend nieprzetestowany na sprzęcie.</li>
+<li><span class="tag">SRG-X400 / BRC-X400</span> &mdash; verified on SRG-X400
+  (HTTP CGI with digest auth, port 80).</li>
+<li><span class="tag">BRC-AM7</span> &mdash; mapped per Sony &bdquo;CGI Command List&rdquo; v2.0;
+  model detected via inq=viewermode. Command set not yet verified on hardware.</li>
 </ul>
 
-<h4>BRC-AM7 &mdash; RÓŻNICE</h4>
+<h4>BRC-AM7 &mdash; DIFFERENCES</h4>
 <ul>
-<li>Focus Near/Far krokowo (AbsoluteFocus); brak ciągłego ruchu ostrości w CGI.</li>
-<li>Presety 1-100; przywołanie tylko numerem, bez prędkości.</li>
-<li>Brak ExposureMode: trzy przełączniki auto (migawka / przysłona / AGC); program
-  spina je w tryby auto / shutter / iris / manual.</li>
-<li>Skale: przysłona CLOSE / F2.8-F11, gain -9 do +36 dB, migawka 50p (1/50-1/8000,
-  64F-2F), kąty co 0,001°, zoom do 25x.</li>
-<li>Balans bieli: atw / memory_a / preset. OnePush AF/WB jako press+release.</li>
+<li>Focus Near/Far in steps (AbsoluteFocus); no continuous focus movement over CGI.</li>
+<li>Presets 1-100; recall by number only, no speed.</li>
+<li>No ExposureMode: three auto switches (shutter / iris / AGC); the app
+  combines them into auto / shutter / iris / manual modes.</li>
+<li>Scales: iris CLOSE / F2.8-F11, gain -9 to +36 dB, shutter 50p (1/50-1/8000,
+  64F-2F), angles in 0.001 deg steps, zoom up to 25x.</li>
+<li>White balance: atw / memory_a / preset. One Push AF/WB as press+release.</li>
 </ul>
 
-<h4>OGRANICZENIA</h4>
+<h4>LIMITATIONS</h4>
 <ul>
-<li>Brak podglądu wideo; obraz idzie z kamery po SDI/HDMI.</li>
-<li>UDP SET działa tylko przy WRITE:on w kamerze; stan WRITE jest w podpowiedzi
-  urządzenia na liście.</li>
-<li>Tabela panelu RM-IP500: odczyt i eksport CSV; zapis do panelu nie jest wysyłany.</li>
-<li>Kadry nie obejmują ekspozycji, balansu bieli ani kolorów.</li>
-<li>Kamery nieosiągalne w sieci nie odtwarzają zakładek przy starcie.</li>
+<li>No video preview; the image goes from the camera over SDI/HDMI.</li>
+<li>UDP SET works only with WRITE:on in the camera; WRITE state is shown in the
+  device tooltip in the list.</li>
+<li>RM-IP500 panel table: read and CSV export; no write to the panel.</li>
+<li>Shots do not include exposure, white balance or colours.</li>
+<li>Cameras unreachable on the network do not restore their tabs at startup.</li>
 </ul>
-<p class="dim">Sterowanie: HTTP CGI (Digest), port 80 kamery. Wykrywanie i SET sieci: UDP 52380.</p>
+<p class="dim">Control: HTTP CGI (Digest), camera port 80. Discovery and network SET: UDP 52380.</p>
 """
 
 
@@ -135,7 +143,7 @@ class AboutDialog(QDialog):
         v.setSpacing(10)
         tb = QTextBrowser()
         tb.setOpenExternalLinks(False)
-        tb.setHtml(ABOUT_HTML)
+        tb.setHtml(ABOUT_HTML.replace("{{VERSION}}", APP_VERSION))
         v.addWidget(tb, 1)
         row = QHBoxLayout()
         row.addStretch(1)
@@ -253,9 +261,11 @@ class MainWindow(QMainWindow):
         v.addLayout(top)
         self.btn_fast = QPushButton("Scan")
         self.btn_fast.setMinimumHeight(32)
+        self.btn_fast.setToolTip("Rescan the network (ARP, SSDP, UDP 52380).")
         self.btn_fast.clicked.connect(lambda: self.start_scan("fast"))
         top.addWidget(self.btn_fast)
         self.btn_stop = QPushButton("Stop")
+        self.btn_stop.setToolTip("Stop the current scan.")
         self.btn_stop.clicked.connect(self.on_stop)
         self.btn_stop.setEnabled(False)
         self.btn_stop.setVisible(False)
@@ -274,6 +284,7 @@ class MainWindow(QMainWindow):
         self.btn_adv = QPushButton("Advanced ▸")
         self.btn_adv.setCheckable(True)
         self.btn_adv.setChecked(False)
+        self.btn_adv.setToolTip("Show or hide advanced network options.")
         self.btn_adv.toggled.connect(self.toggle_adv)
         top.addWidget(self.btn_adv)
 
@@ -289,11 +300,16 @@ class MainWindow(QMainWindow):
         ar1.addWidget(QLabel("Subnet (CIDR):"))
         self.e_cidr = QLineEdit(self.config.get("scan_cidr", "192.168.0.0/24"))
         self.e_cidr.setMaximumWidth(150)
+        self.e_cidr.setToolTip("Subnet to scan, e.g. 192.168.4.0/24.")
         ar1.addWidget(self.e_cidr)
         self.btn_full = QPushButton("Scan subnet")
+        self.btn_full.setToolTip("Scan the whole subnet address by address (slower).")
         self.btn_full.clicked.connect(lambda: self.start_scan("full"))
         ar1.addWidget(self.btn_full)
         self.btn_bridge = QPushButton("Bridge unreachable")
+        self.btn_bridge.setToolTip(
+            "Add temporary IPs on Ethernet for unreachable cameras (one UAC prompt).\n"
+            "Wi-Fi stays online.")
         self.btn_bridge.clicked.connect(self.on_bridge)
         ar1.addWidget(self.btn_bridge)
         ar1.addStretch(1)
@@ -302,13 +318,16 @@ class MainWindow(QMainWindow):
         ar2.addWidget(QLabel("Login:"))
         self.e_user = QLineEdit(self.user)
         self.e_user.setMaximumWidth(110)
+        self.e_user.setToolTip("Camera login (default: admin).")
         ar2.addWidget(self.e_user)
         ar2.addWidget(QLabel("Password:"))
         self.e_pass = QLineEdit(self.password)
         self.e_pass.setEchoMode(QLineEdit.Password)
         self.e_pass.setMaximumWidth(130)
+        self.e_pass.setToolTip("Camera password (default: admin).")
         ar2.addWidget(self.e_pass)
         self.btn_diag = QPushButton("Check connection")
+        self.btn_diag.setToolTip("Ping and test HTTP/VISCA ports on the selected camera.")
         self.btn_diag.clicked.connect(self.on_diag)
         ar2.addWidget(self.btn_diag)
         self.net_lbl = QLabel()
@@ -364,24 +383,30 @@ class MainWindow(QMainWindow):
         devbtn.setSpacing(8)
         lv.addLayout(devbtn)
         self.btn_addip = QPushButton("Add IP...")
+        self.btn_addip.setToolTip("Add a camera by IP address.")
         self.btn_addip.clicked.connect(self.add_manual_ip)
         devbtn.addWidget(self.btn_addip)
         self.btn_all = QPushButton("Control all")
+        self.btn_all.setToolTip("Open control tabs for all cameras in the list.")
         self.btn_all.clicked.connect(self.open_all_tabs)
         devbtn.addWidget(self.btn_all)
         devbtn2 = QHBoxLayout()
         devbtn2.setSpacing(8)
         lv.addLayout(devbtn2)
-        self.btn_udpnet = QPushButton("Sieć kamery…")
+        self.btn_udpnet = QPushButton("Camera network…")
+        self.btn_udpnet.setToolTip("Change camera IP, mask, gateway and name over UDP 52380.")
         self.btn_udpnet.clicked.connect(self.open_udp_write)
         devbtn2.addWidget(self.btn_udpnet)
-        self.btn_camtable = QPushButton("Tabela panelu…")
+        self.btn_camtable = QPushButton("Panel table…")
+        self.btn_camtable.setToolTip("Read the RM-IP500 panel camera table.")
         self.btn_camtable.clicked.connect(self.open_camtable)
         devbtn2.addWidget(self.btn_camtable)
         self.btn_csv = QPushButton("CSV…")
+        self.btn_csv.setToolTip("Import or export the camera list in Sony CSV format.")
         self.btn_csv.clicked.connect(self.csv_menu)
         devbtn2.addWidget(self.btn_csv)
         self.btn_about = QPushButton("About")
+        self.btn_about.setToolTip("Version, features and limitations.")
         self.btn_about.clicked.connect(self.show_about)
         devbtn2.addWidget(self.btn_about)
         split.addWidget(left)
@@ -398,9 +423,11 @@ class MainWindow(QMainWindow):
         row.setSpacing(8)
         rv.addLayout(row)
         self.btn_add = QPushButton("Control selected")
+        self.btn_add.setToolTip("Open the control tab for the selected camera.")
         self.btn_add.clicked.connect(self.add_ctrl_tab)
         row.addWidget(self.btn_add)
         self.btn_web = QPushButton("Open in Edge")
+        self.btn_web.setToolTip("Open the camera web UI in Edge (app window).")
         self.btn_web.clicked.connect(self.open_external)
         row.addWidget(self.btn_web)
         self.log = QPlainTextEdit()
@@ -969,10 +996,24 @@ class MainWindow(QMainWindow):
 
 
 def app_icon():
-    """Ikona aplikacji z assets/icon.svg (wektor: ostra w kazdym rozmiarze)."""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        os.pardir, "assets", "icon.svg")
-    return QIcon(os.path.normpath(path))
+    """App icon from assets/icon.svg (vector: sharp at every size).
+
+    Works both from source and from a PyInstaller bundle (sys._MEIPASS).
+    """
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        candidates = [os.path.join(base, "assets", "icon.svg"),
+                      os.path.join(base, "assets", "icon.ico")]
+    else:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        candidates = [os.path.join(root, "assets", "icon.svg"),
+                      os.path.join(root, "assets", "icon.ico")]
+    for path in candidates:
+        if os.path.exists(path):
+            icon = QIcon(path)
+            if not icon.isNull():
+                return icon
+    return QIcon()
 
 
 def set_windows_app_id():

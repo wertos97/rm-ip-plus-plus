@@ -35,11 +35,11 @@ def cmd_list(args) -> int:
     if not cams:
         print("No replies (no Sony camera responded).")
         return 0
-    print(f"\nZnaleziono {len(cams)} kamer:")
+    print(f"\nFound {len(cams)} cameras:")
     for c in cams:
-        print(f"  * {c['ip']:>15}  model={c['model']:<12} nazwa={c['name']:<10} "
+        print(f"  * {c['ip']:>15}  model={c['model']:<12} name={c['name']:<10} "
               f"MAC={c['mac']:<18} FW={c['softversion']:<6}  "
-              f"maska={c['mask']} brama={c['gateway']} WRITE:{c.get('writable') or '?'}")
+              f"mask={c['mask']} gateway={c['gateway']} WRITE:{c.get('writable') or '?'}")
     return 0
 
 
@@ -52,13 +52,13 @@ def cmd_camtable(args) -> int:
         print("No panel replies (0 pages).")
         return 0
     for p in sorted(pages, key=lambda x: (x["src_ip"], x["page"])):
-        print(f"\nStrona {p['page']}  panel={p['panel_mac'] or '?'}  z {p['src_ip']}")
+        print(f"\nPage {p['page']}  panel={p['panel_mac'] or '?'}  from {p['src_ip']}")
         for e in p["entries"]:
             filled = bool(e["mac"] or e["ip"] or e["name"])
             print(f"  {'*' if filled else ' '} CAM{e['slot']:03d}  "
                   f"{e['mac'] or '-':17}  {e['ip'] or '-':15}  {e['name'] or ''}")
     for m in res["misc"]:
-        print(f"\nDodatkowa odpowiedz z {m['src_ip']}: {m['kind']}  "
+        print(f"\nExtra reply from {m['src_ip']}: {m['kind']}  "
               f"{_raw(m.get('raw') or b'')}")
     return 0
 
@@ -73,8 +73,8 @@ def cmd_write(args) -> int:
         print("Error: --ip must be a valid IPv4 address")
         return 2
     print(f"Network SET for {mac}:")
-    print(f"  IP={args.ip}  maska={args.mask}  brama={args.gw or '(pusta)'}  "
-          f"nazwa={args.name}")
+    print(f"  IP={args.ip}  mask={args.mask}  gateway={args.gw or '(empty)'}  "
+          f"name={args.name}")
     if not args.yes:
         try:
             ans = input("Send? The camera changes its address right after the ACK [y/N]: ")
@@ -87,10 +87,10 @@ def cmd_write(args) -> int:
                                       timeout=args.timeout + 2.0)
     print(f"Wynik: {res['kind']}  ok={res['ok']}")
     for r in res.get("replies", []):
-        print(f"  z {r['src_ip']:>15}  {r['kind']}  mac={r['mac'] or '-'}  "
+        print(f"  from {r['src_ip']:>15}  {r['kind']}  mac={r['mac'] or '-'}  "
               f"{_raw(r['raw'])}")
     if not res.get("replies"):
-        print("  (0 odpowiedzi)")
+        print("  (0 replies)")
     return 0 if res.get("ok") else 3
 
 
