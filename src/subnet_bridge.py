@@ -25,7 +25,8 @@ SSDP_PORT = 1900
 
 
 def _run(cmd: list[str], timeout: int = 15):
-    return subprocess.run(cmd, capture_output=True, text=True, shell=False, timeout=timeout)
+    return subprocess.run(cmd, capture_output=True, text=True, shell=False, timeout=timeout,
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 # tylko typowe dla kamer / broadcast - nie skanujemy calego internetu
 COMMON_CAMERA_SUBNETS = [
     "192.168.0", "192.168.1", "192.168.10", "192.168.100",

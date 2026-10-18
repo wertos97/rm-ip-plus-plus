@@ -40,7 +40,8 @@ def _profile_pids() -> set[int]:
         p = subprocess.run(["powershell", "-NoProfile", "-Command",
                             f"Get-CimInstance Win32_Process -Filter 'CommandLine like \'%{_PROFILE_TAG}%\'\'"
                             " | Select-Object -ExpandProperty ProcessId"],
-                           capture_output=True, text=True, timeout=25)
+                           capture_output=True, text=True, timeout=25,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         pids = {int(x) for x in p.stdout.split() if x.strip().isdigit()}
     except Exception:
         pids = set()

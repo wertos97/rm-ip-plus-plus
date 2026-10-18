@@ -5,7 +5,7 @@ image (exposure/WB) and a Wi-Fi + Ethernet network bridge. No IP setup required.
 
 ## Quick start (for colleagues)
 
-1. Unpack the folder and run `RMIPpp.exe`.
+1. Run `RMIPpp_0.1_win64.exe` (single file - no unpacking, no Python needed).
    Windows SmartScreen may warn about an unsigned app: **More info -> Run anyway**.
 2. The app scans the network on start (ARP, SSDP, UDP 52380). Cameras appear in
    the list with model and status. If your cameras use a different login, open
@@ -78,6 +78,7 @@ Notes:
 
 1. `pip install -r requirements.txt`
 2. `python main.py` - the scan starts by itself; recent cameras are probed first.
+   (Use `pythonw main.py` to run without a console window.)
 3. Double-click a camera = control tab. Right-click = menu (Control / Edge /
    Diagnostics).
 
@@ -87,8 +88,8 @@ Notes:
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-Result: `dist/RMIPpp/RMIPpp.exe` (onedir). Copy the whole `dist/RMIPpp` folder -
-no Python installation is needed on the target machine.
+Result: `dist/RMIPpp_0.1_win64.exe` - one self-contained file (it unpacks itself
+to `%TEMP%` on start). No Python installation is needed on the target machine.
 
 ## Testing without a camera
 

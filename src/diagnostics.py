@@ -16,7 +16,8 @@ def is_admin() -> bool:
 def ping(ip: str, timeout_ms: int = 800) -> tuple[bool, str]:
     try:
         p = subprocess.run(["ping", "-n", "1", "-w", str(timeout_ms), ip],
-                           capture_output=True, text=True, timeout=10)
+                           capture_output=True, text=True, timeout=10,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         ok = p.returncode == 0
         # wytnij tylko linie z czasem/statystyka
         tail = "\n".join((p.stdout or "").splitlines()[-3:])
@@ -37,7 +38,8 @@ def firewall_has_app_rule() -> bool:
     try:
         p = subprocess.run(["powershell", "-NoProfile", "-Command",
                             "Get-NetFirewallRule | Where-Object {$_.DisplayName -like '*RM*IP*'} | Select-Object -First 1"],
-                           capture_output=True, text=True, timeout=15)
+                           capture_output=True, text=True, timeout=15,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return bool(p.stdout.strip())
     except Exception:
         return False

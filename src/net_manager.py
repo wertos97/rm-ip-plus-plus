@@ -37,12 +37,14 @@ def is_admin() -> bool:
 
 
 def _run(cmd: list[str], timeout: int = 20) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, shell=False, timeout=timeout)
+    return subprocess.run(cmd, capture_output=True, text=True, shell=False, timeout=timeout,
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def _run_ps(script: str, timeout: int = 20) -> subprocess.CompletedProcess:
     return subprocess.run(["powershell", "-NoProfile", "-Command", script],
-                          capture_output=True, text=True, timeout=timeout)
+                          capture_output=True, text=True, timeout=timeout,
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def list_ipv4_addresses() -> list[dict]:
