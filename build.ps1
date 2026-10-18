@@ -30,7 +30,8 @@ Write-Host "== pyinstaller (onefile) =="
 pyinstaller --noconfirm --clean --onefile --windowed --name $exe `
   --paths "src" `
   --icon "assets/icon.ico" `
-  --add-data "assets;assets" `
+  --add-data "assets/icon.ico;assets" `
+  --add-data "assets/icon.svg;assets" `
   --version-file "build/version_info.txt" `
   --distpath "dist" `
   main.py
