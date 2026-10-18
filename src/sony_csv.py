@@ -1,16 +1,16 @@
-"""CSV zgodne z RM-IP Setup Tool (formaty odtworzone z deasemblacji v1.2.0).
+"""CSV compatible with RM-IP Setup Tool (formats recovered from v1.2.0 disassembly).
 
-Dwa formaty:
-  * tabela panelu RM-IP (export 0x41e0d0 / import 0x41e450):
-      naglowek ";Group No-Camera No,Camera Name,MAC Address,IP Address,Subnet Mask"
-      (linia zaczynajaca sie "; " jest pomijana przy imporcie - tak robi oryginal)
-      wiersze: "Group<G>-<C>,<nazwa>,<MAC>,<IP>,<maska>", G=1..7, C=1..16;
-      maska "255.255.255.0" gdy slot wypelniony (MAC i IP), inaczej pole puste.
-      Oryginalny import wymaga dokladnie 4 przecinkow na wiersz oraz 100/112
-      wierszy danych - nasze parsowanie jest tolerancyjne, a eksport daje 112.
-  * lista kamer (export 0x411830):
-      naglowek "Camera Name,MAC Address,IP Address,Subnet Mask,Gateway address,Version"
-      wiersze: 6 pol rozdzielonych przecinkami.
+Two formats:
+  * RM-IP panel table (export 0x41e0d0 / import 0x41e450):
+      header ";Group No-Camera No,Camera Name,MAC Address,IP Address,Subnet Mask"
+      (a line starting with "; " is skipped on import - that is what the original does)
+      rows: "Group<G>-<C>,<name>,<MAC>,<IP>,<mask>", G=1..7, C=1..16;
+      mask "255.255.255.0" when the slot is filled (MAC and IP), otherwise empty.
+      The original import requires exactly 4 commas per row and 100/112
+      data rows - our parsing is tolerant, and the export produces 112.
+  * camera list (export 0x411830):
+      header "Camera Name,MAC Address,IP Address,Subnet Mask,Gateway address,Version"
+      rows: 6 comma-separated fields.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ CAMERA_HEADER = "Camera Name,MAC Address,IP Address,Subnet Mask,Gateway address,
 DEFAULT_MASK = "255.255.255.0"
 GROUPS = 7
 PER_GROUP = 16
-TOTAL_SLOTS = GROUPS * PER_GROUP     # 112 (RM-IP500); RM-IP10 ma 100
+TOTAL_SLOTS = GROUPS * PER_GROUP     # 112 (RM-IP500); RM-IP10 has 100
 
 
 def slot_to_group_camera(slot: int) -> tuple[int, int]:
@@ -45,10 +45,10 @@ def _clean_cell(value) -> str:
 
 
 def table_csv_text(slots: dict, total: int = TOTAL_SLOTS) -> str:
-    """Eksport tabeli panelu. slots: {slot: {"name","mac","ip","mask"}}.
+    """Panel table export. slots: {slot: {"name","mac","ip","mask"}}.
 
-    Puste sloty dostaja puste pola (tak jak oryginal), wiec plik ma zawsze
-    `total` wierszy danych - import Sony oczekuje 100 albo 112.
+    Empty slots get empty fields (like the original), so the file always has
+    `total` data rows - the Sony import expects 100 or 112.
     """
     lines = [TABLE_HEADER]
     for slot in range(1, min(int(total), TOTAL_SLOTS) + 1):
@@ -67,7 +67,7 @@ _GC_LOOSE_RE = re.compile(r"(\d+)\D+(\d+)")
 
 
 def parse_table_csv(text: str) -> dict:
-    """Tolerancyjny import tabeli. Zwraca {"rows": [...], "warnings": [...]}."""
+    """Tolerant table import. Returns {"rows": [...], "warnings": [...]}."""
     rows: list[dict] = []
     warnings: list[str] = []
     for ln, raw in enumerate(text.splitlines(), 1):
@@ -75,7 +75,7 @@ def parse_table_csv(text: str) -> dict:
         if not line:
             continue
         if line.startswith(";"):
-            continue                       # naglowek/komentarz - oryginal tez pomija
+            continue                       # header/comment - the original skips it too
         fields = [f.strip() for f in line.split(",")]
         if len(fields) != 5:
             warnings.append(f"wiersz {ln}: {len(fields)} pol zamiast 5 (pomijam)")
@@ -96,7 +96,7 @@ def parse_table_csv(text: str) -> dict:
 
 
 def camera_csv_text(devices: list[dict]) -> str:
-    """Eksport listy kamer. devices: dicts z name,mac,ip,mask,gateway,version."""
+    """Camera list export. devices: dicts with name,mac,ip,mask,gateway,version."""
     lines = [CAMERA_HEADER]
     for d in devices:
         lines.append(",".join(_clean_cell(d.get(k)) for k in
@@ -105,7 +105,7 @@ def camera_csv_text(devices: list[dict]) -> str:
 
 
 def parse_camera_csv(text: str) -> dict:
-    """Import listy kamer. Zwraca {"rows": [...], "warnings": [...]}."""
+    """Camera list import. Returns {"rows": [...], "warnings": [...]}."""
     rows: list[dict] = []
     warnings: list[str] = []
     for ln, raw in enumerate(text.splitlines(), 1):

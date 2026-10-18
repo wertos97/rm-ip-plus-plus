@@ -1,10 +1,10 @@
-"""Sterowanie kamera Sony (SRG-X400/BRC-X400/BRC-AM7) przez udokumentowane CGI.
+"""Sony camera control (SRG-X400/BRC-X400/BRC-AM7) over documented CGI.
 
-SRG-X400 / BRC-X400: zweryfikowane na zywo (HTTP digest auth) - Move/stop,
-RelativePanTilt, presety, imaging.
-BRC-AM7: mapowanie wg "CGI Command List" v2.0 - PanTiltMove/ZoomMove/
-PanTiltSpeedMode/AbsoluteFocus (kroki), 20-bitowe koordynaty, inne jednostki
-imaging. Wykrywanie modelu automatyczne (inq=viewermode -> ModelName).
+SRG-X400 / BRC-X400: verified live (HTTP digest auth) - Move/stop,
+RelativePanTilt, presets, imaging.
+BRC-AM7: mapped per "CGI Command List" v2.0 - PanTiltMove/ZoomMove/
+PanTiltSpeedMode/AbsoluteFocus (steps), 20-bit coordinates, different imaging
+units. Model detection is automatic (inq=viewermode -> ModelName).
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from requests.auth import HTTPDigestAuth
 
 try:
     from .human import AM7_IRIS_CLOSE, AM7_IRIS_MIN, AM7_IRIS_MAX
-except ImportError:  # uruchomienie bez pakietu
+except ImportError:  # running without the package
     from human import AM7_IRIS_CLOSE, AM7_IRIS_MIN, AM7_IRIS_MAX  # noqa: E402
 
 TIMEOUT = 8
@@ -24,17 +24,17 @@ BROWSER_HEADERS = {
 }
 
 # BRC-AM7
-AM7_STEP_SCALE = 5.5          # krok UI (16-bit SRG) -> 20-bit 1/1000° (AM7)
+AM7_STEP_SCALE = 5.5          # UI step (16-bit SRG) -> 20-bit 1/1000° (AM7)
 AM7_WB_MODES = ("atw", "memory_a", "preset")
 
 
 def rel16(v: int) -> str:
-    """Wzgledna wartosc PT dla SRG (16-bit, hex 4 cyfry)."""
+    """Relative PT value for SRG (16-bit, 4 hex digits)."""
     return f"{v & 0xFFFF:04x}"
 
 
 def rel20(v: int) -> str:
-    """Wzgledna wartosc PT dla BRC-AM7 (20-bit, hex 5 cyfr)."""
+    """Relative PT value for BRC-AM7 (20-bit, 5 hex digits)."""
     return f"{v & 0xFFFFF:05x}"
 
 
@@ -52,23 +52,23 @@ class CameraAPI:
         self._family: str | None = None      # 'srg' | 'am7' | None (auto)
         self._family_try = 0.0
         self._speedstep: str | None = None   # AM7: normal/extended
-        self._focus_val: int | None = None   # AM7: cache pozycji focus
+        self._focus_val: int | None = None   # AM7: cached focus position
         self._focus_t = 0.0
 
-    # ---------- wykrywanie modelu ----------
+    # ---------- model detection ----------
     @property
     def family(self) -> str:
-        """'srg' (SRG/BRC-X400...) albo 'am7' (BRC-AM7). Detekcja raz na sesje."""
+        """'srg' (SRG/BRC-X400...) or 'am7' (BRC-AM7). Detected once per session."""
         if self._family:
             return self._family
         import time
         now = time.monotonic()
         if now - self._family_try < 30.0:
-            return "srg"  # kamera milczy - nie cache'ujemy, ponowimy za chwile
+            return "srg"  # camera is silent - do not cache, retry in a moment
         self._family_try = now
         ok, data = self.inquiry("viewermode", timeout=3)
         if ok and isinstance(data, dict):
-            # kamera odpowiedziala na viewermode -> to nie AM7, chyba ze model mowi inaczej
+            # camera answered viewermode -> not an AM7 unless the model says otherwise
             name = (data.get("ModelName") or "").upper()
             self._family = "am7" if "AM7" in name else "srg"
             if self._family == "am7":
@@ -76,7 +76,7 @@ class CameraAPI:
         return self._family or "srg"
 
     def _read_speedstep(self):
-        """AM7: krok predkosci PT (normal=24, extended=127; fabrycznie extended)."""
+        """AM7: PT speed step (normal=24, extended=127; factory default extended)."""
         ok, pt = self.inquiry("ptzf", timeout=3)
         if ok and isinstance(pt, dict):
             v = (pt.get("PanTiltSpeedStep") or "").lower()
@@ -86,7 +86,7 @@ class CameraAPI:
         self._speedstep = "extended"
 
     def _speed_for_ui(self, ui_speed: int) -> int:
-        """Skaluje predkosc UI (0-24, jak SRG) na skale BRC-AM7."""
+        """Scales the UI speed (0-24, like SRG) to the BRC-AM7 scale."""
         v = max(0, min(24, int(ui_speed)))
         if self.family == "am7" and self._speedstep != "normal":
             return max(0, min(127, round(v * 127 / 24)))
@@ -100,7 +100,7 @@ class CameraAPI:
                             auth=HTTPDigestAuth(self.user, self.password), timeout=timeout)
 
     def cmd(self, cgi: str, query: str, timeout: float = TIMEOUT) -> tuple[bool, str]:
-        """Wysyla command/xxx.cgi?... Zwraca (ok, tekst). 200/204 = ok."""
+        """Sends command/xxx.cgi?... Returns (ok, text). 200/204 = ok."""
         try:
             r = self._get(f"/command/{cgi}?{query}", timeout=timeout)
             if r.status_code in (200, 204):
@@ -128,8 +128,8 @@ class CameraAPI:
 
     # ---------- PTZ ----------
     def move(self, direction: str, speed: int) -> tuple[bool, str]:
-        """direction: left/right/up/down/up-left/... speed 0-24 (0=auto wg zoom).
-        25+ to zakres serwisowy - przycinamy zeby nie psuc ruchu."""
+        """direction: left/right/up/down/up-left/... speed 0-24 (0=auto per zoom).
+        25+ is a service range - clamp so movement is not broken."""
         if self.family == "am7":
             sp = self._speed_for_ui(speed)
             return self.cmd("ptzf.cgi", f"PanTiltMove={direction},{sp},{sp}")
@@ -138,7 +138,7 @@ class CameraAPI:
     def zoom_move(self, direction: str, speed: int) -> tuple[bool, str]:
         if self.family == "am7":
             v = max(0, min(8, int(speed)))
-            sp = int(round(32766 * (v / 8.0) ** 2))  # kwadratowo: precyzja na dole
+            sp = int(round(32766 * (v / 8.0) ** 2))  # quadratic: precision at the low end
             return self.cmd("ptzf.cgi", f"ZoomMove={direction},{sp}")
         return self.cmd("ptzf.cgi", f"Move={direction},{int(speed)}")  # tele/wide 0-8
 
@@ -146,12 +146,12 @@ class CameraAPI:
         if self.family == "am7":
             if direction == "onepushaf":
                 return self.one_push_af_press()
-            # BRC-AM7 nie ma ciaglego ruchu focus - UI kroczkuje przez focus_step()
+            # BRC-AM7 has no continuous focus - the UI steps via focus_step()
             return False, "BRC-AM7: no continuous focus (Near/Far steps)."
         return self.cmd("ptzf.cgi", f"Move={direction},{int(speed)}")  # near/far/onepushaf
 
     def focus_step(self, direction: str, step: int = 0x0400, timeout: float = 2.0) -> tuple[bool, str]:
-        """BRC-AM7: krok ostrosci przez AbsoluteFocus (near=+, far=-)."""
+        """BRC-AM7: focus step via AbsoluteFocus (near=+, far=-)."""
         import time
         now = time.monotonic()
         if self._focus_val is None or now - self._focus_t > 1.5:
@@ -185,11 +185,11 @@ class CameraAPI:
     def stop(self, what: str = "pantilt") -> tuple[bool, str]:
         if self.family == "am7":
             if what == "focus":
-                return True, ""  # focus kroczy - nie ma czego zatrzymywac
+                return True, ""  # focus steps - there is nothing to stop
             tests = ("ZoomMove=stop", "ZoomMove=stop,0") if what == "zoom" \
                 else ("PanTiltMove=stop", "PanTiltMove=stop,0,0")
             last: tuple[bool, str] = (False, "?")
-            for q in tests:  # kamera moze wymagac wartosci predkosci - probujemy oba warianty
+            for q in tests:  # the camera may require a speed value - try both variants
                 last = self.cmd("ptzf.cgi", q)
                 if last[0]:
                     return last
@@ -221,7 +221,7 @@ class CameraAPI:
         return self.cmd("ptzf.cgi", f"AbsoluteZoom={pos_hex}")
 
     def absolute_ptzf(self, pan: str, tilt: str, zoom: str, focus: str) -> tuple[bool, str]:
-        """Ruch absolutny PTZ+F - nie rusza imaging (ekspozycja/WB/kolory)."""
+        """Absolute PTZ+F move - does not touch imaging (exposure/WB/colors)."""
         return self.cmd("ptzf.cgi", f"AbsolutePTZF={pan},{tilt},{zoom},{focus}")
 
     def slow_mode(self, on: bool) -> tuple[bool, str]:
@@ -231,15 +231,15 @@ class CameraAPI:
 
     def set_focus_mode(self, mode: str) -> tuple[bool, str]:
         if self.family == "am7":
-            return self.cmd("ptzf.cgi", f"FocusMode={mode}")  # AM7: item w ptzf.cgi
+            return self.cmd("ptzf.cgi", f"FocusMode={mode}")  # AM7: item in ptzf.cgi
         return self.set_imaging(FocusMode=mode)
 
     def status(self, timeout: float = TIMEOUT) -> tuple[bool, dict | str]:
         return self.inquiry("ptzf", timeout=timeout)
 
-    # ---------- presety ----------
+    # ---------- presets ----------
     def preset_list(self) -> tuple[bool, dict]:
-        """Zwraca {num: name} dla zdefiniowanych (parsuje PresetName=1,Preset1,2,...)."""
+        """Returns {num: name} for defined presets (parses PresetName=1,Preset1,2,...)."""
         ok, data = self.inquiry("presetposition")
         if not ok:
             return False, {}
@@ -255,7 +255,7 @@ class CameraAPI:
 
     def preset_recall(self, num: int, speed: int | None = None) -> tuple[bool, str]:
         if self.family == "am7":
-            # AM7: PresetCall przyjmuje tylko numer (predkosc ustawia sie osobno)
+            # AM7: PresetCall takes only the number (speed is set separately)
             return self.cmd("presetposition.cgi", f"PresetCall={int(num)}")
         q = f"PresetCall={int(num)}" + (f",{int(speed)}" if speed else "")
         return self.cmd("presetposition.cgi", q)
@@ -264,7 +264,7 @@ class CameraAPI:
         return self.cmd("presetposition.cgi", f"PresetSet={int(num)},{name},{thumb}")
 
     def thumb(self, num: int, timeout: float = TIMEOUT) -> bytes | None:
-        """Miniaturka presetu z kamery (64x36!) albo None. Slabe - wole still()."""
+        """Preset thumbnail from the camera (64x36!) or None. Poor - prefer still()."""
         try:
             r = requests.get(f"{self.base()}/preset/presetimg{int(num)}.jpg",
                              headers={**BROWSER_HEADERS, "Referer": self.base() + "/"},
@@ -276,7 +276,7 @@ class CameraAPI:
         return None
 
     def still(self, timeout: float = TIMEOUT) -> bytes | None:
-        """Pelen kadr JPEG (aktualny obraz) - do ostrych miniaturek."""
+        """Full JPEG frame (current image) - for sharp thumbnails."""
         for path in ("/oneshotimage1", "/oneshotimage2"):
             try:
                 r = requests.get(f"{self.base()}{path}",
@@ -303,7 +303,7 @@ class CameraAPI:
             return self.cmd("presetposition.cgi", f"CommonSpeed={int(common)}")
         return True, m
 
-    # ---------- obraz ----------
+    # ---------- image ----------
     def imaging(self) -> tuple[bool, dict | str]:
         return self.inquiry("imaging")
 
@@ -317,18 +317,18 @@ class CameraAPI:
         return self.cmd("imaging.cgi", "WhiteBalanceOnePushTrg=on")
 
     def wb_onepush_release(self):
-        """BRC-AM7: konczy 'press' przycisku WB Set (momentary)."""
+        """BRC-AM7: releases the WB Set button 'press' (momentary)."""
         return self.cmd("imaging.cgi", "WhiteBalanceWBSet=release")
 
-    # ---------- BRC-AM7: ekspozycja i balans bieli bez ExposureMode ----------
+    # ---------- BRC-AM7: exposure and white balance without ExposureMode ----------
     def set_exposure_am7(self, mode: str, iris: int, gain: int, shut: int, comp: int) -> tuple[bool, str]:
-        """Mapuje tryb SRG (auto/shutter/iris/manual) na przelaczniki AM7.
+        """Maps the SRG mode (auto/shutter/iris/manual) to AM7 switches.
 
         auto    -> AutoShutter on, AutoIris on,  AGC on
-        shutter -> AutoShutter off, AutoIris on,  AGC on  (priorytet migawki)
-        iris    -> AutoShutter on,  AutoIris off, AGC on  (priorytet przyslony)
-        manual  -> wszystko off
-        iris/gain/migawka wysylamy tylko tam, gdzie funkcja auto jest wylaczona.
+        shutter -> AutoShutter off, AutoIris on,  AGC on  (shutter priority)
+        iris    -> AutoShutter on,  AutoIris off, AGC on  (iris priority)
+        manual  -> everything off
+        iris/gain/shutter are sent only where the auto function is disabled.
         """
         auto_shutter = mode in ("auto", "iris")
         auto_iris = mode in ("auto", "shutter")
@@ -349,7 +349,7 @@ class CameraAPI:
         return self.cmd("imaging.cgi", q)
 
     def set_wb_am7(self, mode: str, cb: int, cr: int, offset: int) -> tuple[bool, str]:
-        """atw/memory_a/preset; CbGain/CrGain tylko w memory_a, offset tylko w atw."""
+        """atw/memory_a/preset; CbGain/CrGain only in memory_a, offset only in atw."""
         mode = mode if mode in AM7_WB_MODES else "atw"
         q = f"WhiteBalanceMode={mode}"
         if mode == "memory_a":

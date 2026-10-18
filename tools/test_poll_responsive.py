@@ -1,6 +1,6 @@
 """Test: polling statusu nie blokuje watku GUI, gdy kamera nie odpowiada.
 
-Symuluje zakladke kamery z nieosiagalnym IP (192.168.4.101 bez trasy) i mierzy,
+Symuluje zakladke kamery z nieosiagalnym IP (192.168.1.101 bez trasy) i mierzy,
 czy petla zdarzen Qt tyka plynnie (heartbeat 200 ms) w trakcie nieudanych pollow.
 Sprawdza tez backoff timera. Offscreen - bez okien.
 """
@@ -19,7 +19,7 @@ app = QApplication(sys.argv[:1])
 
 from ui_control import CameraTab
 
-tab = CameraTab("192.168.4.101", "admin", "admin", reachable=False)
+tab = CameraTab("192.168.1.101", "admin", "admin", reachable=False)
 tab.show()
 
 ticks = [0]

@@ -1,7 +1,7 @@
-"""Okna Edge jako 'karty': jedno okno na kamere, ponowny klik przywraca focus.
+"""Edge windows as 'tabs': one window per camera, clicking again restores focus.
 
-Dedykowany profil (nie rusza glownego Edge uzytkownika, hasla pamietane
-miedzy sesjami), glowny proces na kamere trzymany w slowniku.
+Dedicated profile (does not touch the user's main Edge, passwords are remembered
+between sessions); the main process per camera is kept in a dict.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def browser_exe() -> str | None:
 
 
 def _profile_pids() -> set[int]:
-    """PIDy przegladarek z profilem aplikacji (cache 60 s)."""
+    """Browser PIDs using the app profile (60 s cache)."""
     global _pid_cache
     if time.time() - _pid_cache[0] < 60 and _pid_cache[1]:
         return _pid_cache[1]
@@ -81,7 +81,7 @@ def focus_window(hwnd: int) -> bool:
 
 
 class EdgeTabs:
-    """Jedno okno na IP. open() zwraca 'focused' | 'opened' | 'no-browser'."""
+    """One window per IP. open() returns 'focused' | 'opened' | 'no-browser'."""
 
     def __init__(self):
         self.procs: dict[str, subprocess.Popen] = {}
@@ -111,7 +111,7 @@ class EdgeTabs:
             hwnd = self._find(ip, proc.pid)
             if hwnd and focus_window(hwnd):
                 return "focused", f"Restored window {ip}."
-        # okno moglo przezyc restart aplikacji - szukaj w procesach profilu
+        # the window may have survived an app restart - look in profile processes
         hwnd = self._find(ip, None)
         if hwnd and focus_window(hwnd):
             return "focused", f"Restored window {ip}."

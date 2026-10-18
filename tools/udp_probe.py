@@ -8,7 +8,7 @@ To te same mechanizmy, ktorych uzywa oryginalny RM-IP Setup Tool:
 Uzycie:
   python tools/udp_probe.py [--timeout 2.5]
   python tools/udp_probe.py --camtable
-  python tools/udp_probe.py --write --mac F8-4E-17-DE-30-9F --ip 192.168.4.101 \
+  python tools/udp_probe.py --write --mac 00-11-22-33-44-55 --ip 192.168.1.101 \
       --mask 255.255.255.0 --gw 192.168.4.1 --name CAM2 [--yes]
 """
 import argparse
@@ -102,7 +102,7 @@ def main() -> int:
                     help="read the camera table from the RM-IP panel (ENQ:camtable1..4)")
     ap.add_argument("--write", action="store_true",
                     help="camera network SET (requires --mac, --ip, --name)")
-    ap.add_argument("--mac", default="", help="camera MAC, e.g. F8-4E-17-DE-30-9F")
+    ap.add_argument("--mac", default="", help="camera MAC, e.g. 00-11-22-33-44-55")
     ap.add_argument("--ip", default="", help="new camera IP address")
     ap.add_argument("--mask", default="255.255.255.0", help="subnet mask")
     ap.add_argument("--gw", default="", help="gateway (may be empty)")

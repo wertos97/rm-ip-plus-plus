@@ -1,25 +1,25 @@
-"""Protokol UDP 52380 Sony - odtworzony z deasemblacji RM-IPSetupTool.exe (v1.2.0).
+"""Sony UDP 52380 protocol - recovered from RM-IPSetupTool.exe disassembly (v1.2.0).
 
-Formaty wiadomosci (VA funkcji w oryginale podane w komentarzach):
-  wykrywanie (builder 0x404010, parser 0x427710):
-    zadanie :  02 "ENQ:network" FF 03          -> broadcast UDP 52380
-    odpowiedz: 02 "INFO:network" FF "MODEL:<...>" FF "SOFTVERSION:<...>" FF
-               "MAC:<xx-xx-xx-xx-xx-xx>" FF "IPADR:<ip>" FF "MASK:<maska>" FF
-               "GATEWAY:<brama>" FF "NAME:<nazwa>" FF "WRITE:on|off" FF 03
-  zapis sieci (builder 0x404120..0x4044f7, parser ACK 0x426760 / NAK 0x426ae0):
-    zadanie :  02 "MAC:<mac>" FF "IPADR:<ip>" FF "MASK:<mask>" FF
-               "GATEWAY:<gw>" FF "NAME:<nazwa>" FF 03
-    odpowiedz: 02 "ACK:\"<mac>\"" FF 03   (albo NAK:"<mac>"...)
-  tabela panelu RM-IP (builder 0x418f5e, parser 0x426e60):
-    zadanie :  02 "ENQ:camtable<N>" FF 03      N=1..4 (4 strony x 28 = 112)
-    odpowiedz: 02 "MAC:<mac_panelu>" FF "INFO:camtable<N>" FF
-               "CAM<NNN>:<MAC>:<IP>:<nazwa>" FF ... FF 03   ("CAM002:::" = pusty)
-  0x02 = STX, 0x03 = ETX, 0xFF = separator pol. Oryginal parsuje pole przez
-  strstr("MODEL:") i czyta wartosc do najblizszego bajtu 0xFF - tak samo tu.
+Message formats (original function VAs given in the comments):
+  discovery (builder 0x404010, parser 0x427710):
+    request :  02 "ENQ:network" FF 03          -> UDP 52380 broadcast
+    reply   :  02 "INFO:network" FF "MODEL:<...>" FF "SOFTVERSION:<...>" FF
+               "MAC:<xx-xx-xx-xx-xx-xx>" FF "IPADR:<ip>" FF "MASK:<mask>" FF
+               "GATEWAY:<gateway>" FF "NAME:<name>" FF "WRITE:on|off" FF 03
+  network write (builder 0x404120..0x4044f7, ACK parser 0x426760 / NAK 0x426ae0):
+    request :  02 "MAC:<mac>" FF "IPADR:<ip>" FF "MASK:<mask>" FF
+               "GATEWAY:<gw>" FF "NAME:<name>" FF 03
+    reply   :  02 "ACK:\"<mac>\"" FF 03   (or NAK:"<mac>"...)
+  RM-IP panel table (builder 0x418f5e, parser 0x426e60):
+    request :  02 "ENQ:camtable<N>" FF 03      N=1..4 (4 pages x 28 = 112)
+    reply   :  02 "MAC:<panel_mac>" FF "INFO:camtable<N>" FF
+               "CAM<NNN>:<MAC>:<IP>:<name>" FF ... FF 03   ("CAM002:::" = empty)
+  0x02 = STX, 0x03 = ETX, 0xFF = field separator. The original parses a field via
+  strstr("MODEL:") and reads the value up to the nearest 0xFF byte - same here.
 
-Zaleta nad skanem TCP: broadcast dociera do calego segmentu L2, wiec kamera
-z adresem z innej podsieci niz komputer tez odpowie (dokladnie tak dziala
-"Auto IP Setup" w narzedziu Sony, ktore w ten sposob naprawia zle IP).
+Advantage over a TCP scan: broadcast reaches the whole L2 segment, so a camera
+with an address from a different subnet than the computer also replies (this is
+exactly how "Auto IP Setup" in the Sony tool repairs a wrong IP).
 """
 from __future__ import annotations
 
@@ -40,12 +40,12 @@ _REPLY_KEYS = ("MODEL", "SOFTVERSION", "MAC", "IPADR", "MASK", "GATEWAY", "NAME"
 
 
 def build_request() -> bytes:
-    """Ramka zadania - dokladnie to, co wysyla RM-IP Setup Tool."""
+    """Request frame - exactly what RM-IP Setup Tool sends."""
     return ENQ_NETWORK
 
 
 def _field(data: bytes, key: str) -> str:
-    """Wartosc pola KEY:... do najblizszego 0xFF (albo konca ramki 0x03)."""
+    """Field value KEY:... up to the nearest 0xFF (or the frame end 0x03)."""
     m = re.search(re.escape(key.encode()) + rb":(.*?)[\xff\x03]", data, re.S)
     if not m:
         m = re.search(re.escape(key.encode()) + rb":(.*)", data, re.S)
@@ -55,7 +55,7 @@ def _field(data: bytes, key: str) -> str:
 
 
 def parse_reply(data: bytes, src_ip: str = "") -> dict | None:
-    """Parsuje odpowiedz INFO:network; None gdy to nie nasza odpowiedz."""
+    """Parses an INFO:network reply; None when it is not our reply."""
     if b"INFO:" not in data or b"network" not in data:
         return None
     fields = {k: _field(data, k) for k in _REPLY_KEYS}
@@ -78,7 +78,7 @@ def parse_reply(data: bytes, src_ip: str = "") -> dict | None:
 
 
 def local_ipv4s() -> list[str]:
-    """Lokalne adresy IPv4: ipconfig + adres wyjscia trasy domyslnej + hostname."""
+    """Local IPv4 addresses: ipconfig + default-route egress address + hostname."""
     ips: list[str] = []
     try:
         out = subprocess.run(
@@ -114,15 +114,15 @@ def local_ipv4s() -> list[str]:
 
 
 def _open_socks(ips, log=None):
-    """Jeden socket UDP na kazdy lokalny IPv4 (+ domyslny) - broadcast wyjdzie
-    takze kablem z tymczasowym IP mostu, nie tylko WiFi."""
+    """One UDP socket per local IPv4 (+ default) - the broadcast also goes out
+    over the cable with the bridge temp IP, not only Wi-Fi."""
     socks: list[tuple[socket.socket, str]] = []
     for bind_ip in [""] + [ip for ip in ips if ip not in ("",)]:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             try:
-                s.setsockopt(socket.IPPROTO_IP, socket.IP_TTL, 1)  # nie wyjdzie za router
+                s.setsockopt(socket.IPPROTO_IP, socket.IP_TTL, 1)  # will not leave the router
             except Exception:
                 pass
             s.bind((bind_ip, 0))
@@ -144,7 +144,7 @@ def _open_socks(ips, log=None):
 def _broadcast_targets(ips, extra_broadcasts=()):
     targets = ["255.255.255.255"]
     for ip in ips:
-        b = ip.rsplit(".", 1)[0] + ".255"          # /24 - tak dziala most w apce
+        b = ip.rsplit(".", 1)[0] + ".255"          # /24 - this is how the app bridge works
         if b not in targets:
             targets.append(b)
     for b in extra_broadcasts:
@@ -154,7 +154,7 @@ def _broadcast_targets(ips, extra_broadcasts=()):
 
 
 def _send_rounds(socks, targets, payloads, retries=3, gap=0.15):
-    """Wysyla kazda wiadomosc z listy do wszystkich celow, `retries` rund."""
+    """Sends every message in the list to all targets, `retries` rounds."""
     for attempt in range(max(1, retries)):
         for payload in payloads:
             for s, _ip in socks:
@@ -170,8 +170,8 @@ def _send_rounds(socks, targets, payloads, retries=3, gap=0.15):
 
 
 def _listen(socks, timeout, handler, dedup=None):
-    """Zbiera wyniki handler(data, addr) przez `timeout` sekund.
-    dedup(item) -> klucz odsiewajacy duplikaty (None = bez odsiewania)."""
+    """Collects handler(data, addr) results for `timeout` seconds.
+    dedup(item) -> duplicate-filtering key (None = no filtering)."""
     t0 = time.monotonic()
     out = []
     seen = set()
@@ -214,7 +214,7 @@ def _listen(socks, timeout, handler, dedup=None):
 
 def _exchange(payloads, timeout, handler, dedup=None, retries=3,
               extra_broadcasts=(), log=None, local_ips=None):
-    """Wspolny przeplyw: gniazda -> rundy broadcastu -> nasluch z odsiewem."""
+    """Shared flow: sockets -> broadcast rounds -> listen with dedup."""
     ips = list(local_ips) if local_ips is not None else local_ipv4s()
     socks = _open_socks(ips, log)
     if not socks:
@@ -233,11 +233,11 @@ def _exchange(payloads, timeout, handler, dedup=None, retries=3,
 
 def discover(timeout: float = 2.0, retries: int = 3, extra_broadcasts=(),
              log=None, local_ips=None) -> list[dict]:
-    """Broadcastuje ENQ:network (52380) i zbiera odpowiedzi kamer.
+    """Broadcasts ENQ:network (52380) and collects camera replies.
 
-    Jeden socket na kazdy lokalny adres IPv4 (+ domyslny) - dzieki temu
-    broadcast wychodzi takze kablem z tymczasowym IP mostu, nie tylko WiFi.
-    Zwraca liste dictow z parse_reply (posortowana po IP).
+    One socket per local IPv4 address (+ default) - thanks to this the
+    broadcast also goes out over the cable with the bridge temp IP, not only Wi-Fi.
+    Returns a list of dicts from parse_reply (sorted by IP).
     """
     hits = _exchange(
         [build_request()], timeout,
@@ -255,15 +255,15 @@ def discover(timeout: float = 2.0, retries: int = 3, extra_broadcasts=(),
 
 
 # ---------------------------------------------------------------------------
-# SET sieci kamery (odpowiednik "Auto IP Setup" / WRITE w RM-IP Setup Tool)
+# camera network SET (equivalent of "Auto IP Setup" / WRITE in RM-IP Setup Tool)
 # ---------------------------------------------------------------------------
 
 def normalize_mac(mac: str) -> str:
-    """'f8:4e:17:de:30:9f' / 'f84e17de309f' -> 'F8-4E-17-DE-30-9F' (format Sony)."""
+    """'00:11:22:33:44:55' / '001122334455' -> '00-11-22-33-44-55' (format Sony)."""
     hexs = re.sub(r"[^0-9A-Fa-f]", "", mac or "")
     if len(hexs) != 12:
         raise ValueError(
-            f"MAC must have 12 hex digits, e.g. F8-4E-17-DE-30-9F (got {mac!r})")
+            f"MAC must have 12 hex digits, e.g. 00-11-22-33-44-55 (got {mac!r})")
     return "-".join(hexs[i:i + 2] for i in range(0, 12, 2)).upper()
 
 
@@ -280,10 +280,10 @@ def _clean_top_value(value: str, what: str) -> str:
 
 
 def build_set_network(mac: str, ip: str, mask: str, gateway: str, name: str) -> bytes:
-    """Ramka SET sieci kamery (dokladnie jak 0x404120..0x4044f7 w RM-IPSetupTool).
+    """Camera network SET frame (exactly like 0x404120..0x4044f7 in RM-IPSetupTool).
 
     02 MAC:<mac> FF IPADR:<ip> FF MASK:<mask> FF GATEWAY:<gw> FF NAME:<name> FF 03
-    Wysylana na broadcast - MAC w ramce wybiera kamere, ktora ma to przyjac.
+    Sent via broadcast - the MAC in the frame selects the camera that accepts it.
     """
     mac = normalize_mac(mac)
     ip = _clean_top_value(ip, "IP")
@@ -306,14 +306,14 @@ def build_set_network(mac: str, ip: str, mask: str, gateway: str, name: str) -> 
 
 
 def build_camtable_query(page: int = 1) -> bytes:
-    """ENQ:camtable<N> - N=1..4; kazda strona to 28 slotow tabeli panelu."""
+    """ENQ:camtable<N> - N=1..4; each page is 28 panel table slots."""
     if not 1 <= int(page) <= CAMTABLE_PAGES:
         raise ValueError(f"camtable page {page} out of range 1..{CAMTABLE_PAGES}")
     return f"\x02ENQ:camtable{int(page)}\xff\x03".encode("latin-1")
 
 
 def parse_ack_nak(data: bytes) -> dict | None:
-    """ACK:/NAK: z 52380. MAC kamery jest w cudzyslowie (parser 0x426760/0x426ae0)."""
+    """ACK:/NAK: from 52380. The camera MAC is quoted (parser 0x426760/0x426ae0)."""
     kind = ""
     if b"NAK:" in data:
         kind = "NAK"
@@ -337,7 +337,7 @@ _CAMTABLE_ENTRY_RE = re.compile(r"^CAM(\d{1,3})(.*)$")
 
 
 def parse_camtable_entry(part: str) -> dict | None:
-    """Jeden wpis 'CAM<NNN>:<MAC>:<IP>:<nazwa>' (pusty: 'CAM002:::')."""
+    """One entry 'CAM<NNN>:<MAC>:<IP>:<name>' (empty: 'CAM002:::')."""
     m = _CAMTABLE_ENTRY_RE.match(part.strip())
     if not m:
         return None
@@ -353,7 +353,7 @@ def parse_camtable_entry(part: str) -> dict | None:
 
 
 def parse_camtable_reply(data: bytes, src_ip: str = "") -> dict | None:
-    """Odpowiedz panelu: 02 MAC:<mac_panelu> FF INFO:camtable<N> FF CAM###:... FF 03"""
+    """Panel reply: 02 MAC:<panel_mac> FF INFO:camtable<N> FF CAM###:... FF 03"""
     if b"INFO:camtable" not in data:
         return None
     m = re.search(rb"INFO:camtable(\d+)", data)
@@ -374,11 +374,11 @@ def parse_camtable_reply(data: bytes, src_ip: str = "") -> dict | None:
 def set_camera_network(mac: str, ip: str, mask: str, gateway: str = "", name: str = "",
                        timeout: float = 4.0, retries: int = 3,
                        extra_broadcasts=(), log=None, local_ips=None) -> dict:
-    """Wysyla SET sieci (broadcast) i czeka na ACK/NAK od kamery o danym MAC.
+    """Sends the network SET (broadcast) and waits for ACK/NAK from the given MAC.
 
-    UWAGA: kamera zmienia adres od razu po ACK - jesli nowy IP jest w innej
-    podsieci niz komputer, do dalszej pracy potrzebny bedzie most/temp IP.
-    Zwraca {"ok", "kind": ACK/NAK/timeout, ...}.
+    NOTE: the camera changes its address right after the ACK - if the new IP is in
+    a different subnet than the computer, a bridge/temp IP will be needed.
+    Returns {"ok", "kind": ACK/NAK/timeout, ...}.
     """
     payload = build_set_network(mac, ip, mask, gateway, name)
     target_mac = normalize_mac(mac)
@@ -413,9 +413,9 @@ def set_camera_network(mac: str, ip: str, mask: str, gateway: str = "", name: st
 
 def query_camtable(pages=(1, 2, 3, 4), timeout: float = 5.0, retries: int = 3,
                    extra_broadcasts=(), log=None, local_ips=None) -> dict:
-    """Pyta panel RM-IP o tabele kamer (4 strony po 28 slotow).
+    """Asks the RM-IP panel for its camera table (4 pages of 28 slots).
 
-    Zwraca {"pages": [parse_camtable_reply...], "misc": [ACK/NAK...], "raw": [bajty...]}
+    Returns {"pages": [parse_camtable_reply...], "misc": [ACK/NAK...], "raw": [bytes...]}
     """
     payloads = [build_camtable_query(p) for p in pages]
 

@@ -29,53 +29,53 @@ import sony_udp as su
 assert su.SONY_UDP_PORT == 52380
 assert su.build_request() == b"\x02ENQ:network\xff\x03"
 demo = (b"\x02INFO:network\xffMODEL:SRG-X400\xffSOFTVERSION:1.02\xff"
-        b"MAC:F8-4E-17-DE-30-9F\xffIPADR:192.168.4.101\xffMASK:255.255.255.0\xff"
+        b"MAC:00-11-22-33-44-55\xffIPADR:192.168.1.101\xffMASK:255.255.255.0\xff"
         b"GATEWAY:192.168.4.1\xffNAME:CAM2\xff\x03")
-r = su.parse_reply(demo, "192.168.4.101")
+r = su.parse_reply(demo, "192.168.1.101")
 assert r is not None
-assert r["model"] == "SRG-X400" and r["name"] == "CAM2" and r["ip"] == "192.168.4.101"
-assert r["mac_norm"] == "f8:4e:17:de:30:9f" and r["softversion"] == "1.02"
+assert r["model"] == "SRG-X400" and r["name"] == "CAM2" and r["ip"] == "192.168.1.101"
+assert r["mac_norm"] == "00:11:22:33:44:55" and r["softversion"] == "1.02"
 assert su.parse_reply(b"<html>RouterOS router configuration page</html>",
                       "192.168.88.1") is None
 print("sony_udp OK")
 
 # --- nowe: SET sieci (UDP WRITE), ACK/NAK, camtable ---
 assert su.CAMTABLE_SLOTS == 112
-assert su.normalize_mac("f8:4e:17:de:30:9f") == "F8-4E-17-DE-30-9F"
-assert su.normalize_mac("f84e17de309f") == "F8-4E-17-DE-30-9F"
-setmsg = su.build_set_network("F8-4E-17-DE-30-9F", "192.168.4.101",
+assert su.normalize_mac("00:11:22:33:44:55") == "00-11-22-33-44-55"
+assert su.normalize_mac("001122334455") == "00-11-22-33-44-55"
+setmsg = su.build_set_network("00-11-22-33-44-55", "192.168.1.101",
                               "255.255.255.0", "192.168.4.1", "CAM2")
-assert setmsg == (b"\x02MAC:F8-4E-17-DE-30-9F\xffIPADR:192.168.4.101\xff"
+assert setmsg == (b"\x02MAC:00-11-22-33-44-55\xffIPADR:192.168.1.101\xff"
                   b"MASK:255.255.255.0\xffGATEWAY:192.168.4.1\xffNAME:CAM2\xff\x03"), setmsg
 try:
-    su.build_set_network("zle", "192.168.4.101", "255.255.255.0", "", "CAM2")
+    su.build_set_network("zle", "192.168.1.101", "255.255.255.0", "", "CAM2")
     raise AssertionError("zly MAC powinien rzucic ValueError")
 except ValueError:
     pass
 try:
-    su.build_set_network("F8-4E-17-DE-30-9F", "999.1.1.1", "255.255.255.0", "", "CAM2")
+    su.build_set_network("00-11-22-33-44-55", "999.1.1.1", "255.255.255.0", "", "CAM2")
     raise AssertionError("zle IP powinno rzucic ValueError")
 except ValueError:
     pass
-demo_w = (b"\x02INFO:network\xffMODEL:SRG-X400\xffWRITE:on\xffMAC:F8-4E-17-DE-30-9F\xff"
-          b"IPADR:192.168.4.101\xffMASK:255.255.255.0\xffGATEWAY:192.168.4.1\xff"
+demo_w = (b"\x02INFO:network\xffMODEL:SRG-X400\xffWRITE:on\xffMAC:00-11-22-33-44-55\xff"
+          b"IPADR:192.168.1.101\xffMASK:255.255.255.0\xffGATEWAY:192.168.4.1\xff"
           b"NAME:CAM2\xff\x03")
-rw = su.parse_reply(demo_w, "192.168.4.101")
+rw = su.parse_reply(demo_w, "192.168.1.101")
 assert rw is not None and rw["writable"] == "on"
-ack = su.parse_ack_nak(b'\x02ACK:"F8-4E-17-DE-30-9F"\xff\x03')
-assert ack and ack["kind"] == "ACK" and ack["mac"] == "F8-4E-17-DE-30-9F"
-nak = su.parse_ack_nak(b'\x02NAK:"F8-4E-17-DE-30-9F"\xff\x03')
-assert nak and nak["kind"] == "NAK" and nak["mac"] == "F8-4E-17-DE-30-9F"
+ack = su.parse_ack_nak(b'\x02ACK:"00-11-22-33-44-55"\xff\x03')
+assert ack and ack["kind"] == "ACK" and ack["mac"] == "00-11-22-33-44-55"
+nak = su.parse_ack_nak(b'\x02NAK:"00-11-22-33-44-55"\xff\x03')
+assert nak and nak["kind"] == "NAK" and nak["mac"] == "00-11-22-33-44-55"
 assert su.parse_ack_nak(demo) is None
 assert su.build_camtable_query(1) == b"\x02ENQ:camtable1\xff\x03"
 assert su.build_camtable_query(4) == b"\x02ENQ:camtable4\xff\x03"
 demo_ct = (b"\x02MAC:02-00-C0-A8-00-01\xffINFO:camtable1\xff"
-           b"CAM001:F8-4E-17-DE-30-9F:192.168.4.101:CAM2\xffCAM002:::\xff\x03")
+           b"CAM001:00-11-22-33-44-55:192.168.1.101:CAM2\xffCAM002:::\xff\x03")
 ct = su.parse_camtable_reply(demo_ct, "192.168.4.50")
 assert ct and ct["page"] == 1 and ct["panel_mac"] == "02-00-C0-A8-00-01"
 assert len(ct["entries"]) == 2
-assert ct["entries"][0] == {"slot": 1, "mac": "F8-4E-17-DE-30-9F",
-                            "ip": "192.168.4.101", "name": "CAM2"}
+assert ct["entries"][0] == {"slot": 1, "mac": "00-11-22-33-44-55",
+                            "ip": "192.168.1.101", "name": "CAM2"}
 assert ct["entries"][1]["slot"] == 2 and ct["entries"][1]["mac"] == ""
 assert su.parse_camtable_reply(demo) is None
 print("sony_udp SET/camtable OK")
@@ -84,21 +84,21 @@ import sony_csv as sc
 assert sc.group_camera_to_slot(1, 1) == 1
 assert sc.group_camera_to_slot(7, 16) == 112
 assert sc.slot_to_group_camera(17) == (2, 1)
-slots = {1: {"name": "CAM2", "mac": "F8-4E-17-DE-30-9F", "ip": "192.168.4.101"}}
+slots = {1: {"name": "CAM2", "mac": "00-11-22-33-44-55", "ip": "192.168.1.101"}}
 txt = sc.table_csv_text(slots)
 lines = txt.strip().splitlines()
 assert lines[0] == sc.TABLE_HEADER
-assert lines[1] == "Group1-1,CAM2,F8-4E-17-DE-30-9F,192.168.4.101,255.255.255.0"
+assert lines[1] == "Group1-1,CAM2,00-11-22-33-44-55,192.168.1.101,255.255.255.0"
 assert lines[2] == "Group1-2,,,,"
 assert len(lines) == 113
 pt = sc.parse_table_csv(txt)
 assert not pt["warnings"] and len(pt["rows"]) == 112
-assert pt["rows"][0]["slot"] == 1 and pt["rows"][0]["mac"] == "F8-4E-17-DE-30-9F"
+assert pt["rows"][0]["slot"] == 1 and pt["rows"][0]["mac"] == "00-11-22-33-44-55"
 assert pt["rows"][-1]["slot"] == 112
 bad = sc.parse_table_csv("Group9-1,a,b,c,d\nGroup1-1,too,few\n")
 assert not bad["rows"] and len(bad["warnings"]) == 2
-cam_txt = sc.camera_csv_text([{"name": "CAM2", "mac": "F8-4E-17-DE-30-9F",
-                               "ip": "192.168.4.101", "mask": "255.255.255.0",
+cam_txt = sc.camera_csv_text([{"name": "CAM2", "mac": "00-11-22-33-44-55",
+                               "ip": "192.168.1.101", "mask": "255.255.255.0",
                                "gateway": "192.168.4.1", "version": "1.02"}])
 lines = cam_txt.strip().splitlines()
 assert lines[0] == sc.CAMERA_HEADER and len(lines) == 2
@@ -139,7 +139,7 @@ finally:
     srv.shutdown()
 
 # prawdziwa odpowiedz kamery (IpAddress/Subnetmask/CameraName) -> przechodzi
-srv, port = _fake_http(b'IpAddress="192.168.4.101"\nSubnetmask="255.255.255.0"\nCameraName="CAM2"\n')
+srv, port = _fake_http(b'IpAddress="192.168.1.101"\nSubnetmask="255.255.255.0"\nCameraName="CAM2"\n')
 try:
     ok_c, net_c = SonyCamera("127.0.0.1", http_port=port).get_network(timeout=2)
     assert ok_c is True and net_c.get("CameraName") == "CAM2", net_c
@@ -265,11 +265,11 @@ print("iface-auto OK")
 import creds as credman  # noqa: E402
 
 cfg_c = {"user": "admin", "password": "admin"}  # legacy default -> ignored as custom
-cand = credman.candidates(cfg_c, "192.168.4.101")
+cand = credman.candidates(cfg_c, "192.168.1.101")
 assert cand == [("admin", "admin123"), ("admin", "Admin123"), ("admin", "admin")], cand
-credman.save_credentials(cfg_c, "192.168.4.101", "root", "secret")
-assert credman.candidates(cfg_c, "192.168.4.101")[0] == ("root", "secret")
-assert credman.saved_credentials(cfg_c, "192.168.4.101") == ("root", "secret")
+credman.save_credentials(cfg_c, "192.168.1.101", "root", "secret")
+assert credman.candidates(cfg_c, "192.168.1.101")[0] == ("root", "secret")
+assert credman.saved_credentials(cfg_c, "192.168.1.101") == ("root", "secret")
 cfg_custom = {"user": "operator", "password": "pw"}
 assert ("operator", "pw") in credman.candidates(cfg_custom, "10.0.0.5")
 assert credman.candidates({}, "10.0.0.6")[0] == ("admin", "admin123")

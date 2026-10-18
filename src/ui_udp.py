@@ -1,10 +1,10 @@
-"""Okna protokolu UDP Sony: SET sieci kamery + odczyt tabeli z panelu RM-IP.
+"""Sony UDP protocol dialogs: camera network SET + panel table read from RM-IP.
 
-Protokol odtworzony z RM-IPSetupTool.exe v1.2.0 (patrz src/sony_udp.py):
+Protocol recovered from RM-IPSetupTool.exe v1.2.0 (see src/sony_udp.py):
   SET : 02 MAC:<mac> FF IPADR:.. FF MASK:.. FF GATEWAY:.. FF NAME:.. FF 03
-  ENQ : 02 ENQ:camtable<N> FF 03   (N=1..4 -> 4 x 28 = 112 slotow panelu)
-Oba leca na broadcast 255.255.255.255:52380, wiec dzialaja takze dla kamery
-z adresem z innej podsieci niz komputer (bez zmiany IP karty).
+  ENQ : 02 ENQ:camtable<N> FF 03   (N=1..4 -> 4 x 28 = 112 panel slots)
+Both go to broadcast 255.255.255.255:52380, so they also work for a camera
+with an address from a different subnet than the computer (without changing the adapter IP).
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 
 try:
     from . import sony_csv, sony_udp
-except ImportError:  # uruchomienie skryptowe / testy
+except ImportError:  # script launch / tests
     import sony_csv  # noqa: E402
     import sony_udp  # noqa: E402
 
@@ -46,9 +46,9 @@ class WriteWorker(QThread):
 
 
 class WriteNetDialog(QDialog):
-    """Ustawia siec kamery przez broadcast UDP (jak Auto IP Setup w Sony)."""
+    """Sets the camera network via UDP broadcast (like Auto IP Setup in Sony)."""
 
-    applied = Signal(dict)   # {"old_ip", "ip", "mac"} - tylko po ACK
+    applied = Signal(dict)   # {"old_ip", "ip", "mac"} - only after ACK
 
     def __init__(self, parent=None, defaults: dict | None = None, old_ip: str = ""):
         super().__init__(parent)
@@ -67,7 +67,7 @@ class WriteNetDialog(QDialog):
         g.setColumnStretch(1, 1)
         v.addLayout(g)
         self.e_mac = QLineEdit(d.get("mac", ""))
-        self.e_mac.setPlaceholderText("F8-4E-17-DE-30-9F")
+        self.e_mac.setPlaceholderText("00-11-22-33-44-55")
         self.e_ip = QLineEdit(d.get("ip", ""))
         self.e_mask = QLineEdit(d.get("mask", "") or "255.255.255.0")
         self.e_gw = QLineEdit(d.get("gateway", ""))
@@ -197,7 +197,7 @@ class CamtableWorker(QThread):
 
 
 class CamtableDialog(QDialog):
-    """Tabela kamer panelu RM-IP (ENQ:camtable 1-4) + CSV zgodne z Sony."""
+    """RM-IP panel camera table (ENQ:camtable 1-4) + Sony-compatible CSV."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -262,7 +262,7 @@ class CamtableDialog(QDialog):
 
         self.refresh()
 
-    # -- odczyt z panelu -----------------------------------------------------
+    # -- read from the panel -------------------------------------------------
     def refresh(self):
         if self.worker is not None and self.worker.isRunning():
             return

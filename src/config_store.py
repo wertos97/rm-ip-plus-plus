@@ -1,4 +1,4 @@
-"""Prosty magazyn ustawien: %APPDATA%/RMIP++/config.json"""
+"""Simple settings store: %APPDATA%/RMIP++/config.json"""
 from __future__ import annotations
 
 import json

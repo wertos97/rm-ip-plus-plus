@@ -1,143 +1,232 @@
-# RM IP++ 0.1 - Sony IP camera control console (SRG / BRC)
+<p align="center">
+  <img src="assets/icon.svg" width="112" alt="RM IP++ icon">
+</p>
 
-One window, one tab per camera: full PTZ, camera presets, local shots,
-image (exposure/WB) and a Wi-Fi + Ethernet network bridge. No IP setup required.
+<h1 align="center">RM IP++</h1>
 
-## Quick start (for colleagues)
+<p align="center">
+  <b>Sony IP camera control console for live production</b><br>
+  PTZ &middot; camera presets &middot; local shots &middot; exposure &amp; white balance &middot; Wi-Fi + Ethernet bridge
+</p>
 
-1. Run `RMIPpp_0.1_win64.exe` (single file - no unpacking, no Python needed).
-   Windows SmartScreen may warn about an unsigned app: **More info -> Run anyway**.
-2. The app scans the network on start (ARP, SSDP, UDP 52380). Cameras appear in
-   the list with model and status. Logins are automatic: SRG-X400 defaults to
-   `admin` / `admin123`, BRC-AM7 to `admin` / `Admin123`. If none is accepted,
-   the app asks for the login and password of that camera and remembers them.
-3. Double-click a camera (or use **Control selected**) to open its control tab.
+<p align="center">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078D4">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.1-ff9e2c">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.12-3776AB">
+  <img alt="License" src="https://img.shields.io/badge/license-all%20rights%20reserved-lightgrey">
+</p>
 
-Notes:
-- The exe registers a Start Menu shortcut **RM IP++** on first run; Windows 11
-  uses it to show the correct taskbar icon (AppUserModelID). Keep the exe in a
-  fixed location - the shortcut is refreshed automatically when the path changes.
-- **No cameras?** After a scan with no results, the device list shows an
-  **Add demo camera** button: a simulated camera (no network, no hardware) so
-  you can explore every tab, PTZ, presets, shots and the image panel safely.
-- **Cameras on another subnet / directly on Ethernet:** use **Bridge unreachable**.
-  Windows asks for admin rights once (UAC) and adds a temporary secondary IP on
-  Ethernet. Wi-Fi stays online - Internet traffic keeps using Wi-Fi.
-- **Changing camera IP/mask/gateway/name** (UDP SET) works only with `WRITE:on`
-  in the camera; the WRITE state is shown in the device tooltip.
-- **No video preview** by design: the camera feeds SDI/HDMI to the mixer.
-- On first run Windows Firewall may ask to allow the app - allow it (private
-  networks) so discovery replies are not blocked.
+![RM IP++ main window](assets/screenshots/main.png)
 
-## Models
-
-- **SRG-X400 / BRC-X400** (and relatives with the same CGI) - full support,
-  verified live on SRG-X400.
-- **BRC-AM7** - support based on Sony "CGI Command List" v2.0, detected
-  automatically (`inq=viewermode` -> ModelName):
-  PanTiltMove/ZoomMove (0-127 scale), PanTiltSpeedMode, RelativePanTilt,
-  AbsolutePTZF (20-bit, 1 unit = 0.001 deg), presets (max 100), imaging.
-  Differences: focus Near/Far works in steps (AbsoluteFocus - the camera has no
-  continuous focus movement over CGI), preset recall has no speed, instead of
-  ExposureMode there are three auto switches (shutter/iris/AGC), iris/gain in
-  AM7 units (F/dB), shutter 50p, WB: atw/memory_a/preset, OnePush AF/WB as
-  press+release. Details in the **About** window.
+One window, one tab per camera. No video preview &mdash; the camera feeds SDI/HDMI
+to the mixer, and the app talks to it over HTTP CGI (Digest) and UDP.
 
 ## Features
 
-- **Camera discovery**: ARP + SSDP + known IPs + CIDR range, Stop button,
-  status and model column (e.g. `SRG-X400 (CAM2)`). In parallel the app sends a
-  **UDP 52380 broadcast** (Sony `ENQ:network`) - a camera with an address from
-  another subnet answers too (same as "Auto IP Setup").
-- **Camera network (UDP)**: change the camera IP/mask/gateway/name over
-  broadcast (`MAC:<mac> ...` + ACK/NAK) - works without changing the PC
-  adapter address, even when the camera is outside the PC subnet. Requires
-  `WRITE:on` in the camera.
-- **RM-IP panel table (UDP)**: `ENQ:camtable1..4` reads the camera table from
-  the panel (112 slots, Group1-1..Group7-16), slot preview + CSV export/import
-  in RM-IP Setup Tool format.
-- **CSV (Sony format)**: export/import of the camera list (6 columns) and the
-  panel table (`;Group No-Camera No,...` + 112 rows `GroupG-C,...`) - compatible
-  with the original tool.
-- **Network bridge**: Wi-Fi with Internet stays UNTOUCHED; Ethernet only gets a
-  secondary IP (`SkipAsSource`, no gateway, UAC), so camera traffic goes over
-  the cable while Internet keeps using Wi-Fi. Temporary IPs are cleaned up on
-  exit (idempotent), orphan detection included.
-- **PTZ control**: 8-way pad with Drive mode (press = move, release = stop) and
-  Step mode (click = one precise step; hold = continuous glide after 0.3 s).
-  Speed slider 0-24, zoom/focus, hold buttons with repeat.
-- **Camera presets 1-256**: grid, names, save/recall/clear, SpeedSelect,
-  16:9 thumbnails from `/oneshotimage1` (cached in TEMP).
-- **Shots (local) 1-16 + quick bar 1-6**: store ONLY pan/tilt/zoom/focus
-  (`AbsolutePTZF` in the app config), recalled with a single command.
-  They never touch exposure or white balance.
-- **Image**: exposure (iris/gain/shutter/comp.) and white balance with state
-  read back from the camera; readable values (F3.1, 1/30, +3 dB, degrees, xN);
-  units matched to the model (SRG vs BRC-AM7).
-- **About**: button in the side panel - version, models, differences and
-  limitations.
-- **Style**: black + amber accent (Alpha 7), technical font.
+- **Camera discovery** &mdash; ARP, SSDP and Sony UDP 52380 (`ENQ:network`),
+  known IPs and a full CIDR scan, with progress and a Stop button.
+- **PTZ** &mdash; 8-way pad with **Drive** (move while held) and **Step**
+  (precise single step, hold to glide), speed 0&ndash;24, zoom and focus.
+- **Camera presets 1&ndash;256** &mdash; grid with names, recall/save/clear,
+  recall speed and thumbnails taken from the camera image.
+- **Shots 1&ndash;16 + quick 1&ndash;6** &mdash; local positions that store
+  **only pan/tilt/zoom/focus** (`AbsolutePTZF`). They never touch exposure,
+  white balance or colours.
+- **Image** &mdash; exposure (mode, iris, gain, shutter, compensation) and white
+  balance with state read back from the camera; values in camera units
+  (F, dB/EV, 1/..., frames).
+- **Camera network over UDP** &mdash; change IP / mask / gateway / name by MAC
+  (`SET` + ACK/NAK), works even when the camera is outside the PC subnet
+  (requires `WRITE:on`).
+- **RM-IP500 panel table** &mdash; `ENQ:camtable 1..4`, 112 slots, read-only
+  view and Sony-format CSV export/import.
+- **Network bridge** &mdash; adds secondary IPs on Ethernet for unreachable
+  cameras (one UAC prompt). **Wi-Fi with Internet stays untouched**; temporary
+  IPs are removed on exit and orphans are cleaned on the next start.
+- **Automatic logins** &mdash; per-model defaults, a per-camera prompt when they
+  are rejected, remembered per IP.
+- **Demo camera** &mdash; explore every tab without any hardware.
+- **English UI** with tooltips, dark amber theme and an About window.
 
-## Running from source
+## Screenshots
 
-1. `pip install -r requirements.txt`
-2. `python main.py` - the scan starts by itself; recent cameras are probed first.
-   (Use `pythonw main.py` to run without a console window.)
-3. Double-click a camera = control tab. Right-click = menu (Control / Edge /
-   Diagnostics).
+| Control | Presets |
+|---|---|
+| ![Control tab](assets/screenshots/control.png) | ![Presets with thumbnails](assets/screenshots/presets.png) |
 
-## Building the portable exe
+| Shots | Camera login |
+|---|---|
+| ![Shots tab](assets/screenshots/shots.png) | ![Login prompt](assets/screenshots/login.png) |
 
+<sub>Screenshots generated with the built-in demo camera (sample data).</sub>
+
+## Download and run
+
+Grab the latest single-file exe from
+**[Releases](https://github.com/wertos97/rm-ip-plus-plus/releases/latest)**:
+
+1. Run `RMIPpp_0.1_win64.exe`. No installation, no Python.
+   It unpacks itself to `%TEMP%` on start (the window appears after a few seconds).
+2. SmartScreen may warn about an unsigned app: **More info &rarr; Run anyway**.
+3. The app scans the network on start. Double-click a camera to open its tab.
+
+On first run the exe registers a Start Menu shortcut **RM IP++** with its
+AppUserModelID &mdash; Windows 11 uses it for the taskbar icon. Keep the exe in a
+fixed folder; the shortcut is refreshed automatically when the path changes.
+
+### Camera logins
+
+Default credentials are tried automatically:
+
+| Model | Login | Password |
+|---|---|---|
+| SRG-X400 / BRC-X400 | `admin` | `admin123` |
+| BRC-AM7 | `admin` | `Admin123` |
+
+If a camera rejects them (HTTP 401), the app asks for its login and password and
+remembers them **for that IP** in the config. Different cameras can use
+different credentials.
+
+### No cameras? Try the demo
+
+After a scan with no devices, the list shows **Add demo camera**. It adds a
+simulated camera (no network traffic) so you can explore PTZ, presets, shots and
+the image panel safely.
+
+![Demo camera](assets/screenshots/demo.png)
+
+## Supported models
+
+- **SRG-X400 / BRC-X400** (and relatives with the same CGI) &mdash; full support,
+  verified live on SRG-X400.
+- **BRC-AM7** &mdash; mapped from Sony *CGI Command List v2.0*, detected
+  automatically (`inq=viewermode` &rarr; ModelName). Differences: focus Near/Far
+  moves in steps (`AbsoluteFocus`, no continuous focus over CGI), preset recall
+  by number only, three auto switches instead of `ExposureMode`, iris/gain in
+  AM7 units, shutter 50p, WB `atw` / `memory_a` / `preset`, One Push AF/WB as
+  press+release.
+  **The BRC-AM7 command set has not yet been verified on hardware.**
+
+## Network bridge (Wi-Fi + Ethernet)
+
+Production laptops usually keep Internet on Wi-Fi while cameras live on a
+dedicated Ethernet segment. The app adds only temporary secondary IPs
+(`SkipAsSource`, no gateway) on the physical Ethernet adapter, so camera traffic
+goes over the cable and Internet keeps using Wi-Fi.
+
+- Windows asks for admin rights **once** (UAC) per bridge operation.
+- Temporary IPs are removed when the app exits; leftovers from a crash are
+  detected and cleaned on the next start.
+- The bridge is L3 only &mdash; it does not replace the cable, PoE or power.
+
+## Build from source
+
+Requirements: Windows 10/11, Python 3.12.
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python main.py           # console window
+pythonw main.py          # no console window
 ```
+
+Run the tests:
+
+```powershell
+python tests/test_basic.py
+```
+
+Build the portable single-file exe (PyInstaller, icon, version metadata):
+
+```powershell
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-Result: `dist/RMIPpp_0.1_win64.exe` - one self-contained file (it unpacks itself
-to `%TEMP%` on start). No Python installation is needed on the target machine.
+Result: `dist/RMIPpp_0.1_win64.exe`.
 
-## Testing without a camera
+## Developer tools
 
+| Tool | Purpose |
+|---|---|
+| `python tools/udp_probe.py` | Sony UDP 52380 diagnostics: discovery, `ENQ:camtable`, network `SET` |
+| `python tools/mock_sony_cam.py` | Fake Sony camera on `127.0.0.1:8080` + `:52381` |
+| `python tools/make_screenshots.py` | Regenerate the screenshots in `assets/screenshots` |
+| `python tools/make_ico.py` | Rebuild `assets/icon.ico` from the SVG |
+| `python tools/make_version_info.py` | Generate Windows version metadata for the build |
+| `python tools/test_poll_responsive.py` | Check that status polling never blocks the GUI |
+| `python tools/inspect_am7.py` | Render the BRC-AM7 UI with a fake API (no hardware) |
+
+## Project layout
+
+```text
+main.py                 entry point (theme, icon, AUMID)
+src/
+  ui_main.py            main window, device table, scan worker, About
+  ui_control.py         camera tab: PTZ, presets, shots, exposure/WB
+  ui_udp.py             camera network SET, RM-IP panel table, CSV
+  ui_creds.py           login/password dialog
+  cam_control.py        camera CGI API (SRG + BRC-AM7)
+  sony_client.py        HTTP Digest client
+  sony_udp.py           Sony UDP 52380 (discovery, SET, camtable)
+  sony_csv.py           Sony-format CSV (camera list + panel table)
+  discovery.py          ARP / SSDP / parallel probe
+  net_manager.py        adapters, temporary IPs, UAC, cleanup
+  subnet_bridge.py      SSDP M-SEARCH, ARP, bridge address selection
+  edge_view.py          Edge/Chrome app window per camera
+  human.py              camera value <-> human-readable units
+  creds.py              per-camera credential resolution
+  demo_api.py           simulated camera (demo mode)
+  win_shortcut.py       Start Menu shortcut with AppUserModelID
+  config_store.py       %APPDATA%/RMIP++/config.json
+  theme.py              dark amber theme
+  version.py            version (UI + exe metadata)
+tests/test_basic.py     protocol / parsing / credential / demo tests
+tools/                  developer utilities
+assets/                 icon + screenshots
 ```
-python tests/test_basic.py      # quick module test (includes the demo camera)
-python tools/mock_sony_cam.py   # fake camera on 127.0.0.1:8080 + :52381
-python tools/udp_probe.py       # UDP 52380 listen/diagnostics
-python tools/udp_probe.py --camtable            # table from the RM-IP panel
-python tools/udp_probe.py --write --mac ... --ip ... --name ...   # network SET
-```
 
-Without any hardware you can also just run the app and click **Add demo camera**
-(it appears when a scan finds no devices).
+## Local data and privacy
 
-## Notes
+The exe is portable (no installer), but the app stores user-scoped state:
 
-- SRG-X400: ICMP is often blocked (ping fails, HTTP works).
-- `SlowPanTiltMode` is accepted (204) but has no effect on this firmware - not used.
-- Config (with the camera passwords) is kept in `%APPDATA%\RMIP++\config.json`,
-  never in the repo.
+- `%APPDATA%\RMIP++\config.json` &mdash; settings, known IPs, shots, open tabs and
+  **camera passwords in plain text** (protected by your Windows profile ACL).
+- `%APPDATA%\RMIP++\edge_profile\` &mdash; only if you use *Open in Edge*
+  (dedicated browser profile with cookies/cache).
+- `%LOCALAPPDATA%\RMIP++\icon.ico`, a Start Menu shortcut and the
+  `HKCU\Software\Classes\AppUserModelId\wertos97.RMIPPlusPlus.App` registry key
+  (taskbar icon).
+- `%TEMP%\rmip_thumbs\` (preset thumbnails) and `%TEMP%\rmip_pp_temp_ips.json`
+  (bridge cleanup state).
+- The single-file exe is unpacked to `%TEMP%\_MEIxxxx` while running; a clean
+  exit removes it.
 
-## Files
+No services, autostart entries, scheduled tasks, drivers or telemetry. Nothing
+is written outside your user profile and `%TEMP%`.
 
-- `main.py` - entry point (theme, window icon, AppUserModelID)
-- `src/ui_main.py` - main window, camera table, scan (ScanWorker), About
-- `src/ui_control.py` - control panel: PTZ, presets, shots, image
-- `src/ui_udp.py` - UDP dialogs: camera network SET + RM-IP panel table + CSV
-- `src/sony_udp.py` - UDP 52380 protocol (discovery, network SET, camtable)
-- `src/sony_csv.py` - CSV compatible with RM-IP Setup Tool (camera list + panel table)
-- `src/cam_control.py` - camera CGI API (movement, positions, presets, imaging)
-- `src/sony_client.py` - HTTP digest client (browser headers)
-- `src/discovery.py` - ARP/SSDP/parallel probe with progress
-- `src/net_manager.py` - adapters, temp IPs, UAC, cleanup
-- `src/subnet_bridge.py` - SSDP M-SEARCH, ARP, bridge IP selection
-- `src/human.py` - value maps (shutter/iris/gain/dB/degrees/zoom; SRG + BRC-AM7)
-- `src/theme.py` - Alpha 7 theme (black + amber)
-- `src/edge_view.py` - Edge `--app` window per camera (fallback)
-- `src/version.py` - app version (single source for UI and exe metadata)
-- `src/demo_api.py` - simulated camera (demo mode, no network)
-- `assets/icon.svg` - app icon (vector); `python tools/make_ico.py` -> `assets/icon.ico`
-- `tools/` - developer utilities (UI harness, UDP probe, icon generator, mock camera)
+To remove all traces: delete `%APPDATA%\RMIP++`, `%LOCALAPPDATA%\RMIP++`, the
+Start Menu shortcut, the registry key above, and `%TEMP%\rmip_thumbs` &
+`%TEMP%\rmip_pp_temp_ips.json`.
 
-## Important: physical link first
+## Limitations
 
-The bridge is an L3 layer - it will not replace a cable or power. If Windows
-shows `Ethernet Disconnected / 0 bps`, check: power (12V or PoE+), POWER LED,
-LAN LEDs, connector, and wait ~60 s for boot.
+- No video preview by design; use the camera's SDI/HDMI output.
+- UDP `SET` requires `WRITE:on` in the camera (state shown in the device tooltip).
+- The RM-IP500 panel table is read-only (no write back to the panel).
+- Shots store position only &mdash; not exposure, white balance or colours.
+- Cameras unreachable at startup do not reopen their tabs automatically.
+- BRC-AM7 commands still need validation on real hardware.
+
+## Disclaimer
+
+Sony, SRG, BRC, IPELA and RM-IP are trademarks of Sony Corporation. This project
+is not affiliated with or endorsed by Sony. Use at your own risk, especially for
+network changes on production cameras.
+
+## License
+
+Copyright &copy; 2026 wertos97. **All rights reserved.** No permission is granted
+to use, copy, modify or distribute this software or its binaries without written
+permission from the author. The source is published for reference and
+collaboration; contact the author if you want to use it in your own project.

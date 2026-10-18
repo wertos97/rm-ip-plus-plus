@@ -1,1 +1,1 @@
-"""RM IP++ - nowoczesny następca Sony RM IP Setup Tool (Windows, Python+PySide6)."""
+"""RM IP++ - a modern successor to Sony RM IP Setup Tool (Windows, Python+PySide6)."""

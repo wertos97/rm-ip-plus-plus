@@ -1,4 +1,4 @@
-"""Diagnostyka srodowiska: admin, ping, porty, firewall."""
+"""Environment diagnostics: admin, ping, ports, firewall."""
 from __future__ import annotations
 
 import ctypes
@@ -19,7 +19,7 @@ def ping(ip: str, timeout_ms: int = 800) -> tuple[bool, str]:
                            capture_output=True, text=True, timeout=10,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         ok = p.returncode == 0
-        # wytnij tylko linie z czasem/statystyka
+        # keep only the lines with timing/statistics
         tail = "\n".join((p.stdout or "").splitlines()[-3:])
         return ok, tail.strip()[:300]
     except Exception as e:

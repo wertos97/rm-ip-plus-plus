@@ -1,7 +1,7 @@
-"""Czytelne wartosci sensora: mapowania indeks -> jednostki (z CGI Command List)."""
+"""Human-readable sensor values: index -> unit mappings (from the CGI Command List)."""
 from __future__ import annotations
 
-# Migawka dla 1080/50p (VideoFormat kamery: 1080p_50_ModeB)
+# Shutter for 1080/50p (camera VideoFormat: 1080p_50_ModeB)
 SHUTTER_50P = {
     33: "1/10000", 32: "1/6000", 31: "1/4000", 30: "1/3000", 29: "1/2000",
     28: "1/1500", 27: "1/1000", 26: "1/600", 25: "1/425", 24: "1/300",
@@ -52,12 +52,12 @@ def tilt_deg(h: str) -> float:
 
 
 def zoom_x(h: str) -> float:
-    """Przybliżone powiekszenie optyczne 1-20x (liniowo; optyka nie jest idealnie liniowa)."""
+    """Approximate optical zoom 1-20x (linear; the optics are not perfectly linear)."""
     return zoom_x_max(h, 20.0)
 
 
 def zoom_x_max(h: str, max_x: float = 25.0) -> float:
-    """AM7: optyczny tele end = 0x4000 (25x); powyżej wchodzi Clear Image Zoom."""
+    """AM7: optical tele end = 0x4000 (25x); above that Clear Image Zoom kicks in."""
     try:
         return 1.0 + (max_x - 1.0) * max(0, int(h, 16)) / 0x4000
     except (ValueError, TypeError):
@@ -68,10 +68,10 @@ def fmt_deg(d: float) -> str:
     return "?" if d != d else f"{d:+.1f}°"
 
 
-# ---------- BRC-AM7 (CGI Command List 2.0): inne jednostki niż SRG-X400 ----------
+# ---------- BRC-AM7 (CGI Command List 2.0): different units than SRG-X400 ----------
 
 def _s20(h: str) -> int:
-    """Pan/tilt AM7: 20-bitowa liczba ze znakiem, 1 jednostka = 0.001°."""
+    """AM7 pan/tilt: 20-bit signed number, 1 unit = 0.001°."""
     v = int(h, 16)
     return v - 0x100000 if v >= 0x80000 else v
 
@@ -96,7 +96,7 @@ def gain_db_am7(v) -> str:
 
 
 def ae_level_ev(v) -> str:
-    """AM7 AE Level: 0..24 -> -3.0..+3.0 EV (0.25 EV/krok, 12 = 0)."""
+    """AM7 AE Level: 0..24 -> -3.0..+3.0 EV (0.25 EV/step, 12 = 0)."""
     try:
         ev = (int(v) - 12) * 0.25
     except (ValueError, TypeError):
@@ -107,7 +107,7 @@ def ae_level_ev(v) -> str:
     return s + " EV"
 
 
-# Migawka BRC-AM7 dla 1080/50p (CGI Command List 2.0, "Shutter (Speed)")
+# BRC-AM7 shutter for 1080/50p (CGI Command List 2.0, "Shutter (Speed)")
 SHUTTER_50P_AM7 = {
     5: "64F", 6: "32F", 7: "16F", 8: "8F", 9: "7F", 10: "6F", 11: "5F",
     12: "4F", 13: "3F", 14: "2F", 15: "1/50", 16: "1/60", 17: "1/100",
@@ -115,8 +115,8 @@ SHUTTER_50P_AM7 = {
     23: "1/2000", 24: "1/4000", 25: "1/8000",
 }
 
-# Iris AM7: 27366 = CLOSE, 30975 (F11) .. 32000 (F2.8), 1 jednostka = 1/256 EV.
-# Suwak UI mapujemy na 0..1025 (0=CLOSE, 1025=F2.8), zeby nie bylo martwej strefy.
+# AM7 iris: 27366 = CLOSE, 30975 (F11) .. 32000 (F2.8), 1 unit = 1/256 EV.
+# The UI slider maps to 0..1025 (0=CLOSE, 1025=F2.8) to avoid a dead zone.
 AM7_IRIS_CLOSE = 27366
 AM7_IRIS_MIN = 30975
 AM7_IRIS_MAX = 32000

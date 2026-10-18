@@ -1,3 +1,3 @@
-"""Wersja aplikacji (jedno miejsce dla UI, About i metadanych exe)."""
+"""App version (single place for the UI, About and exe metadata)."""
 
 __version__ = "0.1"

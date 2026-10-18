@@ -4,6 +4,8 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.pytest_cache/
+.ruff_cache/
 
 # Build artefacts
 dist/
@@ -11,10 +13,14 @@ build/
 *.spec
 .rmip_build/
 
-# Lokalne slady (config z haslem jest w %APPDATA%\RMIP++, nie tu)
+# Local-only files (config with camera passwords lives in %APPDATA%\RMIP++, never here)
 docs/
 *.log
 thumbs/
 .screenshots/
 ui_shots*/
 ui_am7/
+
+# Editors
+.idea/
+.vscode/

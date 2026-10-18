@@ -1,8 +1,8 @@
-"""RM IP++: wykrywanie kamer Sony w sieci + otwieranie polaczen (karty web).
+"""RM IP++: discover Sony cameras on the network + open connections (web tabs).
 
-Zero konfiguracji: brak wyboru karty (wszystkie interfejsy na raz, wirtualne
-typu Bluetooth/komorkowe sa ignorowane), skan startuje sam po uruchomieniu,
-a most dobudowuje sie automatycznie tylko gdy kamera jest nieosiagalna.
+Zero configuration: no adapter choice (all interfaces at once, virtual ones
+such as Bluetooth/cellular are ignored), the scan starts by itself on launch,
+and the bridge is built automatically only when a camera is unreachable.
 """
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ except ImportError:
 
 
 class _CenterHint(QLabel):
-    """Szary napis wysrodkowany na pustej tabeli - rozciaga sie z viewportem."""
+    """Gray text centered on the empty table - stretches with the viewport."""
 
     def __init__(self, text: str, viewport):
         super().__init__(text, viewport)
@@ -181,7 +181,7 @@ class ScanWorker(QThread):
 
     def run(self):
         if self.mode == "fast":
-            # faza 1/4: kandydaci z ARP (szybkie trafienia najpierw)
+            # phase 1/4: ARP candidates (quick hits first)
             try:
                 self.step.emit("Scan: ARP table...")
                 self.prog.emit(3, 100)
@@ -191,7 +191,7 @@ class ScanWorker(QThread):
             if self._stop:
                 self.done.emit([])
                 return
-            # faza 2/4: SSDP (multicast, ~2 s)
+            # phase 2/4: SSDP (multicast, ~2 s)
             try:
                 self.step.emit("Scan: SSDP/UPnP listening...")
                 self.prog.emit(8, 100)
@@ -201,10 +201,10 @@ class ScanWorker(QThread):
             if self._stop:
                 self.done.emit([])
                 return
-            # znane + ARP najpierw (trafienia od razu), domyslne na koncu
+            # known + ARP first (hits right away), defaults last
             targets = list(dict.fromkeys(
                 list(self.known) + arp + ssdp + list(disc.LIKELY_DEFAULTS)))
-            # faza 3/4: sondowanie TCP + rownolegle UDP ENQ:network (52380)
+            # phase 3/4: TCP probing + parallel UDP ENQ:network (52380)
             self.step.emit(f"Scan: probing ({len(targets)} addresses)...")
             with ThreadPoolExecutor(max_workers=1) as uex:
                 fut_udp = self._start_udp(uex)
@@ -224,8 +224,8 @@ class ScanWorker(QThread):
         self.done.emit(out)
 
     def _start_udp(self, ex: ThreadPoolExecutor):
-        """UDP ENQ:network (52380) - rownolegle z TCP, znajduje tez kamery
-        z innym IP w tym samym segmencie L2."""
+        """UDP ENQ:network (52380) - parallel with TCP, also finds cameras
+        with a different IP in the same L2 segment."""
         try:
             homes = bridge.guess_homes([{"ip": ip} for ip in self.known])
             extra = [h + ".255" for h in homes]
@@ -296,7 +296,7 @@ class MainWindow(QMainWindow):
         self.btn_adv.toggled.connect(self.toggle_adv)
         top.addWidget(self.btn_adv)
 
-        # pasek zaawansowany (domyslnie schowany)
+        # advanced bar (hidden by default)
         self.adv = QWidget()
         self.adv.setObjectName("adv")
         adv_lay = QVBoxLayout(self.adv)
@@ -308,7 +308,7 @@ class MainWindow(QMainWindow):
         ar1.addWidget(QLabel("Subnet (CIDR):"))
         self.e_cidr = QLineEdit(self.config.get("scan_cidr", "192.168.0.0/24"))
         self.e_cidr.setMaximumWidth(150)
-        self.e_cidr.setToolTip("Subnet to scan, e.g. 192.168.4.0/24.")
+        self.e_cidr.setToolTip("Subnet to scan, e.g. 192.168.1.0/24.")
         ar1.addWidget(self.e_cidr)
         self.btn_full = QPushButton("Scan subnet")
         self.btn_full.setToolTip("Scan the whole subnet address by address (slower).")
@@ -455,7 +455,7 @@ class MainWindow(QMainWindow):
         atexit.register(nm.cleanup_all)
         self.check_orphans()
         self.log_line("Start. " + diag.env_report())
-        # start: najpierw most dla znanych kamer (jedno UAC), potem autoskan
+        # start: first the bridge for known cameras (one UAC), then the auto-scan
         QTimer.singleShot(800, self._startup)
 
     def _startup(self):
@@ -463,10 +463,10 @@ class MainWindow(QMainWindow):
         if known:
             iface = nm.best_bridge_iface()
             if iface:
-                # Most tylko dla nieosiagalnych: IP z biezacej podsieci (np. w sieci
-                # hotelowej router z LIKELY_DEFAULTS) nie moze dostac dodatkowego
-                # adresu na Ethernet - inaczej trasa do wlasnej podsieci sie miesza,
-                # a Internet ma zostac na WiFi.
+                # Bridge only for unreachable ones: an IP from the current subnet (e.g. a
+                # hotel router from LIKELY_DEFAULTS) must not get an extra
+                # address on Ethernet - otherwise the route to its own subnet gets mixed up,
+                # and the Internet is supposed to stay on Wi-Fi.
                 with ThreadPoolExecutor(max_workers=8) as ex:
                     reach = dict(zip(known, ex.map(nm.tcp_reachable, known)))
                 need = [ip for ip in known if not reach.get(ip)]
@@ -475,7 +475,7 @@ class MainWindow(QMainWindow):
                     try:
                         ok, msg = nm.ensure_homes_visible(iface, need)
                     except Exception as e:
-                        ok, msg = False, str(e)[:200]
+                        msg = str(e)[:200]
                     self.log_line("Startup bridge: " + msg)
                     self.update_net_label()
         self.start_scan("fast")
@@ -514,11 +514,11 @@ class MainWindow(QMainWindow):
         if self.worker and self.worker.isRunning():
             self.worker.stop()
             self.worker.wait(3000)
-        for i in range(self.ctrl_tabs.count()):  # domknij polling statusu w kartach
+        for i in range(self.ctrl_tabs.count()):  # close status polling in the tabs
             wdg = self.ctrl_tabs.widget(i)
             if hasattr(wdg, "shutdown"):
                 wdg.shutdown()
-        # sprzatanie w tle - zamkniecie nigdy nie wisi na UAC
+        # cleanup in the background - closing never waits on UAC
         import threading
         threading.Thread(target=nm.cleanup_all, daemon=True).start()
         self.config.update({"scan_cidr": self.e_cidr.text()})
@@ -526,8 +526,8 @@ class MainWindow(QMainWindow):
         super().closeEvent(ev)
 
     def on_bridge(self):
-        """Automat: dla kazdej widocznej (ARP/SSDP/znanej) lecz nieosiagalnej kamery
-        dobuduj most na fizycznym Ethernecie. Bez wyboru karty."""
+        """Automatic: for every visible (ARP/SSDP/known) but unreachable camera
+        build a bridge on physical Ethernet. No adapter selection."""
         cands = list(self.config.get("known_ips", []))
         try:
             cands += [h["ip"] for h in bridge.arp_candidates(None)]
@@ -539,13 +539,13 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Bridge", "No candidates (ARP/SSDP empty).")
             return
         for ip in cands:
-            ok, msg = nm.ensure_reachable(ip)
+            _, msg = nm.ensure_reachable(ip)
             self.log_line(f"Bridge {ip}: {msg}")
         self.update_net_label()
         self.start_scan("fast")
 
     def start_scan(self, mode):
-        # nigdy dwa skany naraz (stary worker porywal sygnaly + crash przy GC)
+        # never two scans at once (an old worker stole signals + crashed on GC)
         self._scan_gen = getattr(self, "_scan_gen", 0) + 1
         my_gen = self._scan_gen
         if self.worker is not None:
@@ -580,8 +580,8 @@ class MainWindow(QMainWindow):
 
     def on_scan_done(self, found, gen=None, announce=True):
         if gen is not None and gen != getattr(self, "_scan_gen", gen):
-            return  # przestarzaly skan - ignoruj
-        # demo camera zostaje na liscie takze po kolejnym skanie
+            return  # stale scan - ignore
+        # the demo camera stays on the list after another scan too
         demo = next((c for c in self.cams if c["ip"] == DEMO_IP), None)
         found = list(found)
         if demo is not None and not any(c["ip"] == DEMO_IP for c in found):
@@ -786,7 +786,7 @@ class MainWindow(QMainWindow):
 
     def add_manual_ip(self):
         from PySide6.QtWidgets import QInputDialog
-        ip, ok = QInputDialog.getText(self, "Add IP", "Camera address (e.g. 192.168.4.101):")
+        ip, ok = QInputDialog.getText(self, "Add IP", "Camera address (e.g. 192.168.1.101):")
         if not ok or not ip.strip():
             return
         ip = ip.strip()
@@ -825,7 +825,7 @@ class MainWindow(QMainWindow):
             self.add_ctrl_tab(c["ip"])
 
     def open_web_tab(self):
-        # dwuklik = od razu sterowanie (zakladka w aplikacji)
+        # double-click = control right away (in-app tab)
         self.add_ctrl_tab()
 
     def ctrl_ips(self):
@@ -923,9 +923,9 @@ class MainWindow(QMainWindow):
         found = {c["ip"] for c in self.cams}
         for ip in self.config.get("open_tabs", []):
             if ip in self.ctrl_ips():
-                continue  # juz otwarta (np. dodana recznie tuz po skanie)
+                continue  # already open (e.g. added manually right after a scan)
             if ip not in found:
-                # kamera nie odpowiada (inna siec) - zakladka zamulalaby okno
+                # camera does not respond (another network) - the tab would freeze the window
                 self.log_line(f"Skipping tab {ip} (camera not responding).")
                 continue
             cam = next((c for c in self.cams if c["ip"] == ip), {}) or {}
@@ -989,9 +989,9 @@ class MainWindow(QMainWindow):
         self.log_line(txt.replace("\n", " | "))
         QMessageBox.information(self, "Connection", txt)
 
-    # -- UDP: SET sieci + tabela panelu + CSV (formaty Sony) -----------------
+    # -- UDP: network SET + panel table + CSV (Sony formats) -----------------
     def _dev_defaults(self, ip: str) -> dict:
-        """Wartosci do prefillu dialogu UDP z danych skanu (UDP > CGI)."""
+        """Values to prefill the UDP dialog from scan data (UDP > CGI)."""
         c = next((x for x in self.cams if x["ip"] == ip), None) or {}
         u = c.get("udp") or {}
         net = c.get("network") if isinstance(c.get("network"), dict) else {}
@@ -1170,11 +1170,11 @@ def app_icon():
 
 
 def set_windows_app_id():
-    """Windows: AppUserModelID + rejestracja ikony dla taskbara (HKCU).
+    """Windows: AppUserModelID + taskbar icon registration (HKCU).
 
-    Samo SetCurrentProcessExplicitAppUserModelID nie wystarcza na Windows 11 -
-    shell szuka ikony dla AUMID w skrocie/klasie. Wpis AppUserModelId z IconUri
-    (tak robi Chrome) daje taskbarowi jednoznaczne zrodlo ikony.
+    SetCurrentProcessExplicitAppUserModelID alone is not enough on Windows 11 -
+    the shell looks for the AUMID icon in the shortcut/class. An AppUserModelId
+    entry with IconUri (as Chrome does) gives the taskbar an unambiguous icon source.
     """
     if os.name != "nt":
         return

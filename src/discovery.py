@@ -1,4 +1,4 @@
-"""Wykrywanie kamer: szybka sciezka dla kabla + sweep podsieci z progressem."""
+"""Camera discovery: fast path for a direct cable + subnet sweep with progress."""
 from __future__ import annotations
 
 import ipaddress
@@ -16,7 +16,7 @@ VISCA_TCP_PORT = 52381
 
 
 def tcp_open(ip: str, port: int, timeout: float = 0.6, retries: int = 2) -> bool:
-    """Proba TCP z powtorka - pierwszy SYN czesto ginie na zimnym ARP."""
+    """TCP attempt with retry - the first SYN is often lost on a cold ARP."""
     for _ in range(max(1, retries)):
         try:
             with socket.create_connection((ip, port), timeout=timeout):
@@ -27,7 +27,7 @@ def tcp_open(ip: str, port: int, timeout: float = 0.6, retries: int = 2) -> bool
 
 
 def udp_discover(timeout: float = 2.0, extra_broadcasts=(), log=None) -> list[dict]:
-    """Sony UDP 52380 (ENQ:network) - znajdzie kamery, nawet z innym IP (L2)."""
+    """Sony UDP 52380 (ENQ:network) - finds cameras even with a different IP (L2)."""
     try:
         from . import sony_udp
     except ImportError:
@@ -37,10 +37,10 @@ def udp_discover(timeout: float = 2.0, extra_broadcasts=(), log=None) -> list[di
 
 
 def merge_udp(found: list[dict], udp_hits: list[dict]) -> list[dict]:
-    """Dolacza kamery widziane przez UDP do wyniku sondy TCP.
+    """Adds cameras seen over UDP to the TCP probe result.
 
-    Kamera z obcej podsieci nie odpowie na TCP, ale broadcast UDP ja znajdzie -
-    trafia na liste z http=False i notatka, zeby nie zniknela z wynikow.
+    A camera in a foreign subnet will not answer TCP, but the UDP broadcast
+    finds it - it is listed with http=False and a note so it stays in results.
     """
     out = list(found)
     by_ip = {c["ip"]: c for c in out}
@@ -71,7 +71,7 @@ def merge_udp(found: list[dict], udp_hits: list[dict]) -> list[dict]:
 
 def probe_ip(ip: str, user: str = "admin", password: str = "admin",
              cgi_timeout: float = 2.5, creds_list=None) -> dict | None:
-    """Szybki probe: TCP rownolegle krotko, CGI z krotszym timeoutem (skan nie wiesza sie).
+    """Fast probe: short parallel TCP, CGI with a shorter timeout (scan does not hang).
 
     creds_list: optional list of (user, password) to try in order (per-camera
     defaults/saved credentials). Falls back to the user/password arguments.
@@ -112,10 +112,10 @@ def probe_ip(ip: str, user: str = "admin", password: str = "admin",
             info["network"] = net
             info["user"], info["password"] = used
         else:
-            # Sony API nie potwierdzilo kamery. Zanim uznamy urzadzenie za kamere,
-            # szukamy sladow Sony/kamery w tytule strony i naglowkach HTTP - inaczej
-            # router/NAS/drukarka z otwartym HTTP (np. MikroTik "RouterOS router
-            # configuration page") trafialyby na liste "Urzadzenia".
+            # The Sony API did not confirm a camera. Before treating the device as a camera,
+            # look for Sony/camera traces in the page title and HTTP headers - otherwise a
+            # router/NAS/printer with open HTTP (e.g. MikroTik "RouterOS router
+            # configuration page") would end up in the "Devices" list.
             ident = ""
             try:
                 import re
@@ -133,11 +133,11 @@ def probe_ip(ip: str, user: str = "admin", password: str = "admin",
             if ident:
                 info["model"] = ident
             elif visca:
-                # brak potwierdzenia po HTTP, ale otwarty port VISCA = prawie na pewno kamera
+                # no HTTP confirmation, but an open VISCA port = almost certainly a camera
                 info["model"] = "camera (VISCA 52381)"
                 info["note"] = "HTTP did not confirm the model - check the camera HTTP port"
             else:
-                return None  # to nie kamera - nie zasmiecaj listy urzadzen
+                return None  # not a camera - do not clutter the device list
             if auth_failed:
                 info["auth_failed"] = True
                 info["note"] = "Login required - open the camera to enter credentials."
@@ -151,7 +151,7 @@ def probe_ip(ip: str, user: str = "admin", password: str = "admin",
 def probe_many(ips: list[str], user="admin", password="admin",
                max_workers: int = 16, cgi_timeout: float = 2.5,
                progress=None, creds_for=None) -> list[dict]:
-    """Rownolegly probe listy IP - calosc w pare sekund, nie wiesza UI."""
+    """Parallel probe of an IP list - done in seconds, does not hang the UI."""
     targets = list(dict.fromkeys(ips))
     total = len(targets)
     found = []
@@ -189,7 +189,7 @@ def scan_defaults(user="admin", password="admin", creds_for=None) -> list[dict]:
 
 def scan_subnet(cidr: str, user="admin", password="admin", max_workers: int = 64,
                 progress=None, stop_flag=None, creds_for=None) -> list[dict]:
-    """Skan z progressem (progress(done,total)) i przerwaniem (stop_flag()->bool)."""
+    """Scan with progress (progress(done,total)) and cancel (stop_flag()->bool)."""
     net = ipaddress.ip_network(cidr, strict=False)
     ips = [str(h) for h in net.hosts()][:512]
     total = len(ips)

@@ -1,11 +1,11 @@
-"""Klient HTTP CGI dla Sony SRG-X400 / BRC-X400 / BRC-AM7 - tylko odczyt.
+"""HTTP CGI client for Sony SRG-X400 / BRC-X400 / BRC-AM7 - read only.
 
-Aplikacja jedynie wykrywa kamery i otwiera do nich polaczenia (karty web).
-Zapis (network.cgi) i sterowanie VISCA sa poza zakresem.
+The app only detects cameras and opens connections to them (web tabs).
+Writing (network.cgi) and VISCA control are out of scope.
 
-Odczyt:
-  GET /command/inquiry.cgi?inq=network  -> parametry sieci / model
-Uwierzytelnianie: digest (domyslnie admin/admin).
+Read:
+  GET /command/inquiry.cgi?inq=network  -> network parameters / model
+Authentication: digest (default admin/admin).
 """
 from __future__ import annotations
 
@@ -16,9 +16,9 @@ DEFAULT_USER = "admin"
 DEFAULT_PASSWORD = "admin"
 TIMEOUT = 6
 
-# Pola wystepujace w prawdziwej odpowiedzi inquiry.cgi?inq=network (SRG/BRC).
-# Samo HTTP 200 z "klucz=wartosc" to za malo - router hotelowy czy NAS Synology
-# tez tak odpowiadaja, a ich HTML zawiera przypadkowe pary klucz=wartosc.
+# Fields present in a real inquiry.cgi?inq=network reply (SRG/BRC).
+# HTTP 200 with "key=value" alone is not enough - a hotel router or Synology NAS
+# answer the same way, and their HTML contains accidental key=value pairs.
 SONY_NET_KEYS = {"ipaddress", "subnetmask", "defaultgateway", "dhcp", "dns",
                  "hostname", "modelname", "cameraname", "macaddress", "mac",
                  "serialnumber", "deviceuniqueid", "softversion"}
@@ -45,7 +45,7 @@ class SonyCamera:
     }
 
     def _get(self, path: str, timeout: float = TIMEOUT):
-        # naglowki przegladarki sa wymagane - bez nich kamera zwraca 403
+        # browser headers are required - without them the camera returns 403
         return requests.get(self.base() + path, headers={**self.BROWSER_HEADERS, "Referer": self.base() + "/"},
                             auth=HTTPDigestAuth(self.user, self.password), timeout=timeout)
 
@@ -58,14 +58,14 @@ class SonyCamera:
 
     @staticmethod
     def _model_from_uid(uid: str) -> str:
-        """'SRG-X400-03202816' -> 'SRG-X400' (ucina liczbowy serial)."""
+        """'SRG-X400-03202816' -> 'SRG-X400' (strips the numeric serial)."""
         parts = (uid or "").split("-")
         if len(parts) >= 2 and parts[-1].strip().isdigit():
             return "-".join(parts[:-1])
         return uid
 
     def get_network(self, timeout: float = TIMEOUT) -> tuple[bool, dict | str]:
-        """Odpytuje inquiry.cgi?inq=network, parsuje do dict (do identyfikacji)."""
+        """Queries inquiry.cgi?inq=network, parses it into a dict (for identification)."""
         try:
             r = self._get("/command/inquiry.cgi?inq=network", timeout=timeout)
             if r.status_code == 401:
@@ -78,7 +78,7 @@ class SonyCamera:
                 if "=" in line:
                     k, v = line.split("=", 1)
                     out[k.strip()] = v.strip().strip("'\"")
-            # model sprzetowy z licencji: DeviceUniqueId="SRG-X400-03202816"
+            # hardware model from the license: DeviceUniqueId="SRG-X400-03202816"
             try:
                 rl = self._get("/command/inquiry.cgi?inqjs=license", timeout=timeout)
                 if rl.status_code == 200:
@@ -91,7 +91,7 @@ class SonyCamera:
             except Exception:
                 pass
             if "ModelName" not in out:
-                # BRC-AM7 nie ma inqjs=license - model z inq=viewermode (CGI 2.0)
+                # BRC-AM7 has no inqjs=license - model from inq=viewermode (CGI 2.0)
                 try:
                     rv = self._get("/command/inquiry.cgi?inq=viewermode", timeout=timeout)
                     if rv.status_code == 200:

@@ -1,12 +1,12 @@
-"""Zarzadzanie tymczasowymi adresami IP na Windows.
+"""Temporary IP address management on Windows.
 
-Kamery Sony fabrycznie siedza w 192.168.0.x, a PC czesto jest gdzie indziej
-(10.x / 169.254 APIPA przy kablu bezposrednim). Aplikacja doklada DRUGI
-(secondary) adres IP do wybranej karty i usuwa go przy zamknieciu.
+Sony cameras ship on 192.168.0.x while the PC is often elsewhere
+(10.x / 169.254 APIPA on a direct cable). The app adds a SECOND
+(secondary) IP address to the chosen adapter and removes it on exit.
 
-v2: dodawanie przez PowerShell New-NetIPAddress -SkipAsSource (nie psuje
-domyslnego routingu), usuwanie przez Remove-NetIPAddress, fallback do netsh,
-wykrywanie admina + elevacja pojedynczej komendy, wykrywanie sierot po crashu.
+v2: add via PowerShell New-NetIPAddress -SkipAsSource (does not break
+default routing), remove via Remove-NetIPAddress, netsh fallback,
+admin detection + per-command elevation, orphan detection after a crash.
 """
 from __future__ import annotations
 
@@ -96,9 +96,9 @@ def _forget(alias: str, ip: str) -> None:
 
 
 def find_orphans() -> list[dict]:
-    """Prawdziwe sieroty: zapamietane w pliku, ale juz nieobecne na kartach
-    (np. recznie usuniete albo po crashu przy sprzataniu). Wpisy nadal aktywne
-    NIE sa siertami - nie pytamy o nie przy starcie."""
+    """Real orphans: remembered in the file but no longer present on adapters
+    (e.g. removed manually or after a crash during cleanup). Entries still active
+    are NOT orphans - we do not ask about them at startup."""
     state = _load_state()
     if not state:
         return []
@@ -107,7 +107,7 @@ def find_orphans() -> list[dict]:
 
 
 def _ps_add(alias: str, ip: str, prefix: int) -> tuple[bool, str]:
-    # -SkipAsSource zeby nie zmieniac domyslnego zrodla ruchu PC
+    # -SkipAsSource so the PC default traffic source is not changed
     esc = alias.replace("'", "''")
     script = (f"New-NetIPAddress -InterfaceAlias '{esc}' -IPAddress '{ip}' "
               f"-PrefixLength {prefix} -SkipAsSource $True -ErrorAction Stop | Out-Null; 'OK'")
@@ -134,17 +134,17 @@ def _netsh_add(alias: str, ip: str, prefix: int) -> tuple[bool, str]:
 
 
 def _elevated_add(alias: str, ip: str, prefix: int) -> tuple[bool, str]:
-    """Jednorazowa elevacja tylko komendy netsh (UAC), bez restartu calej apki.
+    """One-off elevation of the netsh command only (UAC), no full app restart.
 
-    Start-Process -Verb RunAs nie zwraca ExitCode (inny proces), wiec nie
-    pytamy o ExitCode - odpalamy z -Wait i weryfikujemy skutek na karcie.
+    Start-Process -Verb RunAs does not return ExitCode (separate process), so
+    we do not ask for ExitCode - run with -Wait and verify the effect on the adapter.
     """
     mask = {24: "255.255.255.0", 16: "255.255.0.0", 8: "255.0.0.0"}.get(prefix, "255.255.255.0")
     script = (f"Start-Process netsh -ArgumentList 'interface ipv4 add address "
               f"name=\"{alias}\" addr={ip} mask={mask}' -Verb RunAs -Wait")
     try:
         _run_ps(script, timeout=60)
-        # weryfikacja skutku zamiast ExitCode
+        # verify the effect instead of ExitCode
         for a in list_ipv4_addresses():
             if a["alias"] == alias and a["ip"] == ip:
                 return True, "OK(elevated)"
@@ -176,7 +176,7 @@ def add_temp_ip(interface_alias: str, ip: str, prefix: int = 24) -> tuple[bool, 
 def remove_temp_ip(interface_alias: str, ip: str) -> tuple[bool, str]:
     live = {(a["alias"], a["ip"]) for a in list_ipv4_addresses()}
     if (interface_alias, ip) not in live:
-        # adresu juz nie ma - tylko zapomnij, ZERO UAC
+        # the address is already gone - just forget it, ZERO UAC
         _forget(interface_alias, ip)
         return True, f"{ip} is already gone from '{interface_alias}' (no UAC)."
     if is_admin():
@@ -191,7 +191,7 @@ def remove_temp_ip(interface_alias: str, ip: str) -> tuple[bool, str]:
             return True, f"Removed {ip} from '{interface_alias}'."
         out = (((p.stderr or "") + (r.stderr or ""))).strip()[:300]
         return False, f"Could not remove {ip} (maybe already gone). {out}"
-    # bez admina: jednorazowa elevacja usuwania (UAC), weryfikacja skutku
+    # without admin: one-off removal elevation (UAC), verify the effect
     script = (f"Start-Process netsh -ArgumentList 'interface ipv4 delete address "
               f"name=\"{interface_alias}\" addr={ip}' -Verb RunAs -Wait")
     try:
@@ -210,12 +210,12 @@ _CLEANED = False
 _CLEAN_LOCK = threading.Lock()
 
 def cleanup_all() -> list[str]:
-    """Sprzatanie jednokrotne na proces: pierwsze wywolanie przejmuje stan
-    (zapisuje pusty), wiec rownolegle closeEvent+atexit nie dublowaly UAC."""
+    """Cleanup once per process: the first call claims the state
+    (writes an empty one), so parallel closeEvent+atexit do not duplicate UAC."""
     global _CLEANED
     with _CLEAN_LOCK:
         claimed = _load_state()
-        _save_state([])  # przejecie - drugie wywolanie nie ma juz czego sprzatac
+        _save_state([])  # claimed - the second call has nothing left to clean
         if not claimed or _CLEANED:
             _CLEANED = True
             return []
@@ -224,14 +224,14 @@ def cleanup_all() -> list[str]:
 
 
 def ensure_homes_visible(interface_alias: str, homes: list[str], prefix: int = 24) -> tuple[bool, str]:
-    """Jedno UAC na wiele podsieci: dobudowuje brakujace secondary IP na raz.
+    """One UAC for many subnets: builds all missing secondary IPs at once.
 
-    homes to bazowe /24 w formie '192.168.4' (lub pelne IP - baza wyliczana).
-    Zwraca (ok, komunikat). Bez nowych adresow - bez UAC w ogole.
+    homes are /24 bases like '192.168.4' (or full IPs - the base is derived).
+    Returns (ok, message). No new addresses - no UAC at all.
     """
     want: list[tuple[str, str]] = []
     for h in dict.fromkeys(homes):
-        # h moze byc '192.168.4' albo '192.168.4.101'
+        # h can be '192.168.4' or '192.168.1.101'
         parts = h.split(".")
         base = ".".join(parts[:3]) if len(parts) == 4 else h
         live = {a["ip"] for a in list_ipv4_addresses() if a["alias"] == interface_alias}
@@ -251,7 +251,7 @@ def ensure_homes_visible(interface_alias: str, homes: list[str], prefix: int = 2
                 _remember(TempIp(interface_alias, bip, prefix))
             msgs.append(m)
         return True, " | ".join(msgs)
-    # jedna elevacja na wszystko: powershell z wieloma netsh w srodku
+    # one elevation for everything: powershell with multiple netsh inside
     mask = {24: "255.255.255.0", 16: "255.255.0.0", 8: "255.0.0.0"}.get(prefix, "255.255.255.0")
     cmds = "; ".join(f"netsh interface ipv4 add address name=\"{interface_alias}\" addr={bip} mask={mask}"
                      for _, bip in want)
@@ -273,7 +273,7 @@ def ensure_homes_visible(interface_alias: str, homes: list[str], prefix: int = 2
 
 def ensure_subnet_visible(interface_alias: str, subnet_ip: str = "192.168.0.200",
                           prefix: int = 24) -> tuple[bool, str]:
-    """Pojedynczy secondary IP (kompatybilnosc)."""
+    """Single secondary IP (compatibility)."""
     base = ".".join(subnet_ip.split(".")[: prefix // 8])
     for a in list_ipv4_addresses():
         if a["alias"] == interface_alias and a["ip"].startswith(base + "."):
@@ -281,7 +281,7 @@ def ensure_subnet_visible(interface_alias: str, subnet_ip: str = "192.168.0.200"
     return add_temp_ip(interface_alias, subnet_ip, prefix)
 
 
-# ---------- automatyczny wybor interfejsu (bez recznego ComboBox) ----------
+# ---------- automatic interface selection (no manual ComboBox) ----------
 
 VIRTUAL_HINTS = ("bluetooth", "loopback", "polaczenie lokalne", "połączenie lokalne",
                  "local area connection", "wi-fi direct", "wifi direct", "direct",
@@ -301,7 +301,7 @@ def is_virtual_alias(alias: str, desc: str = "") -> bool:
 
 
 def list_adapters() -> list[dict]:
-    """Wszystkie karty: {alias, status, mediatype, desc, virtual}."""
+    """All adapters: {alias, status, mediatype, desc, virtual}."""
     ps = ("Get-NetAdapter | Select-Object Name,Status,MediaType,InterfaceDescription | "
           "ConvertTo-Json")
     try:
@@ -325,7 +325,7 @@ def list_adapters() -> list[dict]:
 
 
 def best_bridge_iface() -> str | None:
-    """Automatyczny wybor karty pod most: fizyczny Ethernet, najlepiej z linkiem."""
+    """Automatic adapter choice for the bridge: physical Ethernet, preferably with link."""
     try:
         ads = list_adapters()
     except Exception:
@@ -350,7 +350,7 @@ def tcp_reachable(ip: str, timeout: float = 1.0) -> bool:
 
 
 def ensure_reachable(ip: str, prefix: int = 24) -> tuple[bool, str]:
-    """Pelny automat: jesli IP osiagalne - nic nie rob; jesli nie - dobuduj most."""
+    """Fully automatic: if the IP is reachable - do nothing; if not - build the bridge."""
     if tcp_reachable(ip):
         return True, f"{ip} reachable without changes."
     iface = best_bridge_iface()

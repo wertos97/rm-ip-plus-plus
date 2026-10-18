@@ -1,4 +1,4 @@
-"""Styl Alpha 7: czen, amber, nowa czcionka, biale ikony."""
+"""Alpha 7 style: black, amber, new font, white icons."""
 from __future__ import annotations
 
 from PySide6.QtGui import QFont, QFontDatabase
@@ -96,7 +96,7 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
 
 def base_font() -> QFont:
-    # techniczna, waska - jak w menu aparatow; fallback systemowy
+    # technical, narrow - like in camera menus; system fallback
     for fam in ("Bahnschrift", "Segoe UI Variable Text", "Segoe UI"):
         if fam in QFontDatabase.families():
             f = QFont(fam)
