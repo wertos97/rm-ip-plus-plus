@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 
 APP_NAME = "RMIP++"
 IS_WINDOWS = sys.platform == "win32"
@@ -31,4 +32,6 @@ def cache_dir() -> str:
 
 
 def thumbnail_dir() -> str:
+    if IS_WINDOWS:
+        return os.path.join(tempfile.gettempdir(), "rmip_thumbs")
     return os.path.join(cache_dir(), "thumbnails")

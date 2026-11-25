@@ -1,5 +1,7 @@
 import json
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import config_store
 import discovery
@@ -70,3 +72,33 @@ def test_temp_ip_state_round_trip(monkeypatch):
     monkeypatch.setattr(net_manager, "list_ipv4_addresses", lambda: [])
     net_manager._save_state([{"interface_alias": "Ethernet", "ip": "192.168.0.200", "prefix": 24}])
     assert net_manager.find_orphans() == [{"interface_alias": "Ethernet", "ip": "192.168.0.200", "prefix": 24}]
+
+
+def test_windows_thumbnail_cache_keeps_legacy_temp_path(monkeypatch):
+    import platform_paths
+
+    monkeypatch.setattr(platform_paths, "IS_WINDOWS", True)
+    monkeypatch.setattr(platform_paths, "IS_MACOS", False)
+    monkeypatch.setattr(platform_paths.tempfile, "gettempdir", lambda: "C:/Temp")
+    assert platform_paths.thumbnail_dir() == platform_paths.os.path.join("C:/Temp", "rmip_thumbs")
+
+
+def test_windows_removal_is_not_reported_before_verification(monkeypatch):
+    monkeypatch.setattr(net_manager, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(net_manager, "is_admin", lambda: False)
+    monkeypatch.setattr(
+        net_manager,
+        "list_ipv4_addresses",
+        lambda: [{"alias": "Ethernet", "ip": "192.168.0.200", "prefix": 24}],
+    )
+    monkeypatch.setattr(
+        net_manager,
+        "_run_ps",
+        lambda *args, **kwargs: subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+    )
+    forgotten = []
+    monkeypatch.setattr(net_manager, "_forget", lambda alias, ip: forgotten.append((alias, ip)))
+    ok, message = net_manager.remove_temp_ip("Ethernet", "192.168.0.200")
+    assert not ok
+    assert "not confirmed" in message
+    assert forgotten == []

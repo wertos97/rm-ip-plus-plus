@@ -237,8 +237,8 @@ Windows:
 - `%APPDATA%\RMIP++\config.json`: settings, known IPs, shots, open tabs and **camera passwords in plain text**, protected by the Windows profile ACL.
 - `%APPDATA%\RMIP++\edge_profile\`: browser profile used by **Open in browser**.
 - `%LOCALAPPDATA%\RMIP++\icon.ico`, a Start Menu shortcut and `HKCU\Software\Classes\AppUserModelId\wertos97.RMIPPlusPlus.App`: taskbar integration.
-- `%LOCALAPPDATA%\RMIP++\thumbnails\`: preset and shot thumbnails.
-- `%LOCALAPPDATA%\RMIP++\temp_ips.json`: bridge cleanup state.
+- `%TEMP%\rmip_thumbs\`: preset and shot thumbnails.
+- `%TEMP%\rmip_pp_temp_ips.json`: bridge cleanup state.
 - `%TEMP%\_MEIxxxx`: temporary PyInstaller extraction directory for the Windows single-file build.
 
 macOS:

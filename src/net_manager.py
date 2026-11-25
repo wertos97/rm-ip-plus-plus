@@ -13,6 +13,7 @@ import re
 import shlex
 import socket
 import subprocess
+import tempfile
 import threading
 from dataclasses import asdict, dataclass
 
@@ -21,7 +22,10 @@ try:
 except ImportError:
     from platform_paths import cache_dir
 
-STATE_FILE = os.path.join(cache_dir(), "temp_ips.json")
+if os.name == "nt":
+    STATE_FILE = os.path.join(tempfile.gettempdir(), "rmip_pp_temp_ips.json")
+else:
+    STATE_FILE = os.path.join(cache_dir(), "temp_ips.json")
 
 
 @dataclass
@@ -281,8 +285,11 @@ def remove_temp_ip(interface_alias: str, ip: str) -> tuple[bool, str]:
             fallback = _run(
                 ["netsh", "interface", "ipv4", "delete", "address", f"name={interface_alias}", f"addr={ip}"]
             )
-            _forget(interface_alias, ip)
-            if result.returncode == 0 or fallback.returncode == 0:
+            gone = all(
+                not (address["alias"] == interface_alias and address["ip"] == ip) for address in list_ipv4_addresses()
+            )
+            if gone:
+                _forget(interface_alias, ip)
                 return True, f"Removed {ip} from '{interface_alias}'."
             output = (((result.stderr or "") + (fallback.stderr or "")).strip())[:300]
             return False, f"Could not remove {ip}. {output}"
@@ -294,18 +301,27 @@ def remove_temp_ip(interface_alias: str, ip: str) -> tuple[bool, str]:
             _run_ps(script, timeout=60)
         except Exception as exc:
             return False, f"Removal elevation failed: {exc}"[:300]
+        gone = all(
+            not (address["alias"] == interface_alias and address["ip"] == ip) for address in list_ipv4_addresses()
+        )
+        if gone:
+            _forget(interface_alias, ip)
+            return True, f"Removed {ip} from '{interface_alias}' (UAC elevation)."
+        return False, f"Removal of {ip} not confirmed. Was UAC denied?"
     else:
         command = ["/sbin/ifconfig", interface_alias, "-alias", ip]
         try:
             result = _run(command) if is_admin() else _run_admin_macos(command)
         except Exception as exc:
             return False, f"Removal elevation failed: {exc}"[:300]
-        if result.returncode != 0:
+        gone = all(
+            not (address["alias"] == interface_alias and address["ip"] == ip) for address in list_ipv4_addresses()
+        )
+        if gone:
             _forget(interface_alias, ip)
-            return False, f"Could not remove {ip}: {((result.stderr or '') + (result.stdout or '')).strip()[:300]}"
-
-    _forget(interface_alias, ip)
-    return True, f"Removed {ip} from '{interface_alias}'."
+            return True, f"Removed {ip} from '{interface_alias}'."
+        output = ((result.stderr or "") + (result.stdout or "")).strip()[:300]
+        return False, f"Could not remove {ip}: {output}"
 
 
 _CLEANED = False

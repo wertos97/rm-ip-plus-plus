@@ -12,6 +12,8 @@
 - SRG shutter labels and demo mechanical limits match the documentation.
 - Preset names reject query delimiters and values longer than 32 characters.
 - Thumbnail refresh no longer moves the camera or overwrites presets.
+- Windows keeps the legacy temporary thumbnail and bridge-state paths.
+- Network cleanup verifies address removal before forgetting cleanup state.
 - Shots now save against the camera IP instead of the tab label.
 - Preset saves keep the name entered by the user.
 - Generated thumbnails are no longer deleted from the cache.
