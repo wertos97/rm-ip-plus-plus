@@ -47,7 +47,7 @@ def _profile_pids() -> set[int]:
                 "powershell",
                 "-NoProfile",
                 "-Command",
-                f"Get-CimInstance Win32_Process -Filter 'CommandLine like '%{_PROFILE_TAG}%''"
+                f"Get-CimInstance Win32_Process -Filter \"CommandLine like '%{_PROFILE_TAG}%'\""
                 " | Select-Object -ExpandProperty ProcessId",
             ],
             capture_output=True,
@@ -98,11 +98,6 @@ def focus_window(hwnd: int) -> bool:
         return False
 
 
-def _activate_macos_browser(executable: str) -> None:
-    name = "Google Chrome" if "Chrome" in executable else "Microsoft Edge"
-    subprocess.Popen(["osascript", "-e", f'tell application "{name}" to activate'])
-
-
 class EdgeTabs:
     """One browser window per camera IP."""
 
@@ -134,14 +129,10 @@ class EdgeTabs:
             return "no-browser", "Edge/Chrome not found."
 
         process = self.procs.get(ip)
-        if process is not None and process.poll() is None:
-            if os.name == "nt":
-                hwnd = self._find(ip, process.pid)
-                if hwnd and focus_window(hwnd):
-                    return "focused", f"Restored window {ip}."
-            else:
-                _activate_macos_browser(executable)
-                return "focused", f"Restored browser for {ip}."
+        if process is not None and process.poll() is None and os.name == "nt":
+            hwnd = self._find(ip, process.pid)
+            if hwnd and focus_window(hwnd):
+                return "focused", f"Restored window {ip}."
 
         if os.name == "nt":
             hwnd = self._find(ip, None)

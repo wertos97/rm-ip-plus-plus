@@ -250,7 +250,7 @@ macOS:
 
 The app installs no services, autostart entries, scheduled tasks, drivers or telemetry.
 
-To remove all traces on Windows, delete `%APPDATA%\RMIP++`, `%LOCALAPPDATA%\RMIP++`, the Start Menu shortcut and the registry key above. On macOS, delete `~/Library/Application Support/RMIP++` and `~/Library/Caches/RMIP++`.
+To remove all traces on Windows, delete `%APPDATA%\RMIP++`, `%LOCALAPPDATA%\RMIP++`, `%TEMP%\rmip_thumbs`, `%TEMP%\rmip_pp_temp_ips.json`, the Start Menu shortcut and the registry key above. On macOS, delete `~/Library/Application Support/RMIP++` and `~/Library/Caches/RMIP++`.
 
 ## Limitations
 

@@ -4,6 +4,12 @@
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
+function Assert-Exit([string]$what) {
+    if ($LASTEXITCODE -ne 0) {
+        throw "$what failed with exit code $LASTEXITCODE"
+    }
+}
+
 $python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $python)) {
     throw "Missing .venv. Create it with: python -m venv .venv"
@@ -14,21 +20,27 @@ $exe = "RMIPpp_${ver}_win64"
 
 Write-Host "== dependencies =="
 & $python -m pip install --disable-pip-version-check -r requirements-dev.txt
+Assert-Exit "dependency install"
 
 Write-Host "== checks =="
 & $python -m ruff check .
+Assert-Exit "ruff check"
 & $python -m ruff format --check .
+Assert-Exit "ruff format check"
 & $python -m pytest
+Assert-Exit "pytest"
 
 Write-Host "== assets =="
 & $python tools/make_ico.py
+Assert-Exit "icon generation"
 & $python tools/make_version_info.py
+Assert-Exit "version metadata"
 
-if (Test-Path "dist\$exe.exe") {
+if (Test-Path "dist") {
     try {
-        Remove-Item "dist\$exe.exe" -Force
+        Get-ChildItem "dist" -Filter "*.exe" | Remove-Item -Force
     } catch {
-        throw "Close the running $exe.exe first, then build again."
+        throw "Close any running RM IP++ executable, then build again."
     }
 }
 
@@ -41,6 +53,11 @@ Write-Host "== PyInstaller (onefile) =="
     --version-file "build/version_info.txt" `
     --distpath "dist" `
     main.py
+Assert-Exit "PyInstaller"
+
+if (-not (Test-Path "dist\$exe.exe")) {
+    throw "PyInstaller did not create dist\$exe.exe"
+}
 
 if (Test-Path "dist\RMIPpp") {
     Remove-Item "dist\RMIPpp" -Recurse -Force

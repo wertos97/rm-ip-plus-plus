@@ -31,8 +31,10 @@ def load() -> dict:
     try:
         with open(CONFIG_FILE, encoding="utf-8") as file:
             config = json.load(file)
+        if not isinstance(config, dict):
+            return copy.deepcopy(DEFAULTS)
         return {**copy.deepcopy(DEFAULTS), **config}
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
         return copy.deepcopy(DEFAULTS)
 
 

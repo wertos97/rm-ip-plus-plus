@@ -29,6 +29,33 @@ def test_malformed_config_falls_back_to_defaults():
     assert config["known_ips"] == []
 
 
+def test_non_object_config_falls_back_to_defaults():
+    config_store.save({})
+    for value in ("null", "[]", '"text"', "42"):
+        with open(config_store.CONFIG_FILE, "w", encoding="utf-8") as file:
+            file.write(value)
+        config = config_store.load()
+        assert config["scan_cidr"] == "192.168.0.0/24"
+
+
+def test_cleanup_runs_again_for_addresses_added_later(monkeypatch):
+    removed = []
+    monkeypatch.setattr(net_manager, "_load_state", lambda: list(net_manager._test_state))
+    monkeypatch.setattr(net_manager, "_save_state", lambda items: setattr(net_manager, "_test_state", list(items)))
+
+    def fake_remove(alias, ip):
+        removed.append((alias, ip))
+        net_manager._forget(alias, ip)
+        return True, f"Removed {ip}"
+
+    monkeypatch.setattr(net_manager, "remove_temp_ip", fake_remove)
+    net_manager._test_state = [{"interface_alias": "Ethernet", "ip": "192.168.0.200", "prefix": 24}]
+    net_manager.cleanup_all()
+    net_manager._test_state.append({"interface_alias": "Ethernet", "ip": "192.168.1.200", "prefix": 24})
+    net_manager.cleanup_all()
+    assert removed == [("Ethernet", "192.168.0.200"), ("Ethernet", "192.168.1.200")]
+
+
 def test_discovery_merge_keeps_foreign_subnet_camera():
     merged = discovery.merge_udp(
         [],
@@ -69,7 +96,7 @@ def test_bridge_interface_prefers_connected_ethernet(monkeypatch):
 
 
 def test_temp_ip_state_round_trip(monkeypatch):
-    monkeypatch.setattr(net_manager, "list_ipv4_addresses", lambda: [])
+    monkeypatch.setattr(net_manager, "_query_ipv4_addresses", lambda: [])
     net_manager._save_state([{"interface_alias": "Ethernet", "ip": "192.168.0.200", "prefix": 24}])
     assert net_manager.find_orphans() == [{"interface_alias": "Ethernet", "ip": "192.168.0.200", "prefix": 24}]
 
@@ -83,12 +110,23 @@ def test_windows_thumbnail_cache_keeps_legacy_temp_path(monkeypatch):
     assert platform_paths.thumbnail_dir() == platform_paths.os.path.join("C:/Temp", "rmip_thumbs")
 
 
+def test_windows_removal_does_not_trust_failed_address_query(monkeypatch):
+    monkeypatch.setattr(net_manager, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(net_manager, "_query_ipv4_addresses", lambda: None)
+    forgotten = []
+    monkeypatch.setattr(net_manager, "_forget", lambda alias, ip: forgotten.append((alias, ip)))
+    ok, message = net_manager.remove_temp_ip("Ethernet", "192.168.0.200")
+    assert not ok
+    assert "Could not query" in message
+    assert forgotten == []
+
+
 def test_windows_removal_is_not_reported_before_verification(monkeypatch):
     monkeypatch.setattr(net_manager, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr(net_manager, "is_admin", lambda: False)
     monkeypatch.setattr(
         net_manager,
-        "list_ipv4_addresses",
+        "_query_ipv4_addresses",
         lambda: [{"alias": "Ethernet", "ip": "192.168.0.200", "prefix": 24}],
     )
     monkeypatch.setattr(

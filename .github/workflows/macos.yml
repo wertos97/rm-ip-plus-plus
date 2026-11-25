@@ -20,7 +20,7 @@ jobs:
       - name: Test and build Apple Silicon app
         run: bash build-macos.sh
       - name: Verify architecture
-        run: lipo -archs "dist/RM IP++.app/Contents/MacOS/RM IP++"
+        run: test "$(lipo -archs "dist/RM IP++.app/Contents/MacOS/RM IP++")" = "arm64"
       - name: Upload ZIP
         uses: actions/upload-artifact@v4
         with:

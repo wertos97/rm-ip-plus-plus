@@ -8,6 +8,7 @@ import edge_view
 import net_manager
 import platform_paths
 import subnet_bridge
+from tools.make_icns import ICONSET_NAMES
 
 
 def posix_os():
@@ -70,17 +71,34 @@ def test_macos_adapter_selection(monkeypatch):
     assert net_manager.best_bridge_iface() == "en0"
 
 
+def test_macos_usb_and_thunderbolt_ethernet_selection(monkeypatch):
+    monkeypatch.setattr(net_manager, "os", posix_os())
+    adapters = [
+        {"alias": "en5", "status": "Up", "mediatype": "USB 10/100/1000 LAN", "desc": "USB LAN", "virtual": False},
+        {
+            "alias": "en6",
+            "status": "Down",
+            "mediatype": "Thunderbolt Ethernet",
+            "desc": "Thunderbolt",
+            "virtual": False,
+        },
+        {"alias": "en1", "status": "Up", "mediatype": "Wi-Fi", "desc": "Wi-Fi", "virtual": False},
+    ]
+    monkeypatch.setattr(net_manager, "list_adapters", lambda: adapters)
+    assert net_manager.best_bridge_iface() == "en5"
+
+
 def test_macos_arp_parsing(monkeypatch):
     monkeypatch.setattr(subnet_bridge, "os", SimpleNamespace(name="posix"))
     output = (
-        "? (192.168.1.20) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]\n"
+        "? (192.168.1.20) at 0:1e:c2:9:a:b on en0 ifscope [ethernet]\n"
         "? (192.168.1.255) at ff:ff:ff:ff:ff:ff on en0 ifscope [ethernet]\n"
     )
     monkeypatch.setattr(subnet_bridge, "_run", lambda *args, **kwargs: completed(output))
     assert subnet_bridge.arp_candidates() == [
         {
             "ip": "192.168.1.20",
-            "mac": "aa:bb:cc:dd:ee:ff",
+            "mac": "0:1e:c2:9:a:b",
             "state": "reachable",
             "via": "arp",
             "iface": "en0",
@@ -117,7 +135,7 @@ def test_macos_bridge_uses_one_admin_prompt(monkeypatch, tmp_path):
         )
         return completed()
 
-    monkeypatch.setattr(net_manager, "list_ipv4_addresses", current_addresses)
+    monkeypatch.setattr(net_manager, "_query_ipv4_addresses", current_addresses)
     monkeypatch.setattr(net_manager, "is_admin", lambda: False)
     monkeypatch.setattr(net_manager, "_run_admin_macos", admin)
     ok, message = net_manager.ensure_homes_visible("en0", ["192.168.0.10", "192.168.1.10"])
@@ -134,6 +152,32 @@ def test_macos_ping_command(monkeypatch):
     monkeypatch.setattr(diagnostics.subprocess, "run", lambda command, **kwargs: calls.append(command) or completed())
     diagnostics.ping("127.0.0.1", timeout_ms=800)
     assert calls == [["ping", "-c", "1", "-t", "1", "127.0.0.1"]]
+
+
+def test_macos_iconset_contains_standard_names():
+    names = {name for group in ICONSET_NAMES.values() for name in group}
+    assert "icon_16x16.png" in names
+    assert "icon_32x32@2x.png" in names
+    assert "icon_128x128@2x.png" in names
+    assert "icon_256x256@2x.png" in names
+    assert "icon_512x512.png" in names
+    assert "icon_512x512@2x.png" in names
+
+
+def test_windows_edge_profile_query_is_valid(monkeypatch):
+    monkeypatch.setattr(edge_view, "os", SimpleNamespace(name="nt"))
+    edge_view._pid_cache = (0.0, set())
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return completed("123\n")
+
+    monkeypatch.setattr(edge_view.subprocess, "run", run)
+    assert edge_view._profile_pids() == {123}
+    script = calls[0][-1]
+    assert '-Filter "CommandLine like' in script
+    assert "'%rmip_edge_profile%'" in script
 
 
 def test_macos_browser_detection(monkeypatch):

@@ -68,6 +68,7 @@ def ssdp_search(timeout: float = 4.0) -> list[dict]:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         sock.settimeout(timeout)
         # local TTL + broadcast also for older cameras
         ttl = struct.pack("b", 2)
@@ -141,7 +142,7 @@ def arp_candidates(interface_alias: str | None = None) -> list[dict]:
                 ip, mac, state = match.groups()
             else:
                 match = re.match(
-                    r"\s*\??\s*\((\d+\.\d+\.\d+\.\d+)\)\s+at\s+([0-9a-fA-F:]{17})\s+on\s+(\S+)",
+                    r"\s*\??\s*\((\d+\.\d+\.\d+\.\d+)\)\s+at\s+([0-9a-fA-F]{1,2}(?::[0-9a-fA-F]{1,2}){5})\s+on\s+(\S+)",
                     line,
                 )
                 if not match:

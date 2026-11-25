@@ -16,7 +16,15 @@ from PySide6.QtWidgets import QApplication
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SVG = os.path.join(ROOT, "assets", "icon.svg")
 ICNS = os.path.join(ROOT, "assets", "icon.icns")
-SIZES = (16, 32, 64, 128, 256, 512, 1024)
+ICONSET_NAMES = {
+    16: ["icon_16x16.png"],
+    32: ["icon_16x16@2x.png", "icon_32x32.png"],
+    64: ["icon_32x32@2x.png"],
+    128: ["icon_128x128.png"],
+    256: ["icon_128x128@2x.png", "icon_256x256.png"],
+    512: ["icon_256x256@2x.png", "icon_512x512.png"],
+    1024: ["icon_512x512@2x.png"],
+}
 
 
 def render_image(size: int) -> QImage:
@@ -40,22 +48,15 @@ def main() -> None:
     try:
         iconset = os.path.join(temporary, "icon.iconset")
         os.makedirs(iconset)
-        for size in SIZES:
+        for size, names in ICONSET_NAMES.items():
             image = render_image(size)
-            buffer = QBuffer()
-            buffer.open(QIODevice.OpenModeFlag.WriteOnly)
-            image.save(buffer, "PNG")
-            if size == 64:
-                name = "icon_32x32@2x.png"
-            elif size == 256:
-                name = "icon_128x128@2x.png"
-            elif size == 512:
-                name = "icon_256x256@2x.png"
-            else:
-                name = f"icon_{size}x{size}.png"
-            with open(os.path.join(iconset, name), "wb") as file:
-                file.write(bytes(buffer.data()))
-            buffer.close()
+            for name in names:
+                buffer = QBuffer()
+                buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+                image.save(buffer, "PNG")
+                with open(os.path.join(iconset, name), "wb") as file:
+                    file.write(bytes(buffer.data()))
+                buffer.close()
         subprocess.run(["iconutil", "-c", "icns", iconset, "-o", ICNS], check=True)
         print("ok", ICNS, os.path.getsize(ICNS), "bytes")
     finally:

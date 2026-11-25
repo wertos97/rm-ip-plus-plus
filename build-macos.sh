@@ -8,6 +8,11 @@ PYTHON="${PYTHON:-python3}"
 VENV="$ROOT/.venv-macos"
 APP="$ROOT/dist/RM IP++.app"
 
+if [ "$(uname -m)" != "arm64" ]; then
+    echo "This build script requires an Apple Silicon Mac." >&2
+    exit 1
+fi
+
 "$PYTHON" -m venv "$VENV"
 PY="$VENV/bin/python"
 
@@ -32,6 +37,12 @@ VER="$("$PY" -c 'from src.version import __version__; print(__version__)')"
     --osx-bundle-identifier "com.wertos97.rmipplusplus" \
     --distpath "dist" \
     main.py
+
+ARCH="$(lipo -archs "$APP/Contents/MacOS/RM IP++")"
+if [ "$ARCH" != "arm64" ]; then
+    echo "Expected arm64, got: $ARCH" >&2
+    exit 1
+fi
 
 VER="$VER" "$PY" - <<'PY'
 import os

@@ -562,10 +562,13 @@ class MainWindow(QMainWindow):
             wdg = self.ctrl_tabs.widget(i)
             if hasattr(wdg, "shutdown"):
                 wdg.shutdown()
-        # cleanup in the background - closing never waits on UAC
-        import threading
-
-        threading.Thread(target=nm.cleanup_all, daemon=True).start()
+        # Remove temporary addresses before the process exits.
+        try:
+            messages = nm.cleanup_all()
+            if messages:
+                self.log_line("Cleanup: " + " | ".join(messages))
+        except Exception as exc:
+            self.log_line(f"Cleanup failed: {exc}"[:200])
         self.config.update({"scan_cidr": self.e_cidr.text()})
         cfg.save(self.config)
         super().closeEvent(ev)

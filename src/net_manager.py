@@ -84,7 +84,7 @@ def _run_admin_macos(command: list[str], timeout: int = 90) -> subprocess.Comple
     return _run(["osascript", "-e", applescript], timeout=timeout)
 
 
-def list_ipv4_addresses() -> list[dict]:
+def _query_ipv4_addresses() -> list[dict] | None:
     if os.name == "nt":
         script = (
             "Get-NetIPAddress -AddressFamily IPv4 | "
@@ -92,8 +92,8 @@ def list_ipv4_addresses() -> list[dict]:
         )
         try:
             result = _run_ps(script)
-            if not result.stdout.strip():
-                return []
+            if result.returncode != 0 or not result.stdout.strip():
+                return None
             data = json.loads(result.stdout)
             if isinstance(data, dict):
                 data = [data]
@@ -106,37 +106,51 @@ def list_ipv4_addresses() -> list[dict]:
                 for item in data
             ]
         except Exception:
-            pass
-    else:
-        try:
-            result = _run(["ifconfig", "-a"])
-            addresses: list[dict] = []
-            interface = ""
-            for line in (result.stdout or "").splitlines():
-                header = re.match(r"^([A-Za-z0-9]+):", line)
-                if header:
-                    interface = header.group(1)
-                    continue
-                match = re.search(r"\binet\s+(\d+\.\d+\.\d+\.\d+)\s+netmask\s+(\S+)", line)
-                if not interface or not match:
-                    continue
-                ip, mask = match.groups()
-                try:
-                    if mask.lower().startswith("0x"):
-                        prefix = bin(int(mask, 16)).count("1")
-                    else:
-                        prefix = ipaddress.IPv4Network(f"0.0.0.0/{mask}").prefixlen
-                except ValueError:
-                    prefix = 24
-                addresses.append({"alias": interface, "ip": ip, "prefix": prefix})
-            if addresses:
-                return addresses
-        except Exception:
-            pass
+            return None
+
+    try:
+        result = _run(["ifconfig", "-a"])
+        if result.returncode != 0:
+            return None
+        addresses: list[dict] = []
+        interface = ""
+        for line in (result.stdout or "").splitlines():
+            header = re.match(r"^([A-Za-z0-9]+):", line)
+            if header:
+                interface = header.group(1)
+                continue
+            match = re.search(r"\binet\s+(\d+\.\d+\.\d+\.\d+)\s+netmask\s+(\S+)", line)
+            if not interface or not match:
+                continue
+            ip, mask = match.groups()
+            try:
+                if mask.lower().startswith("0x"):
+                    prefix = bin(int(mask, 16)).count("1")
+                else:
+                    prefix = ipaddress.IPv4Network(f"0.0.0.0/{mask}").prefixlen
+            except ValueError:
+                prefix = 24
+            addresses.append({"alias": interface, "ip": ip, "prefix": prefix})
+        return addresses
+    except Exception:
+        return None
+
+
+def list_ipv4_addresses() -> list[dict]:
+    addresses = _query_ipv4_addresses()
+    if addresses is not None:
+        return addresses
     try:
         return [{"alias": "?", "ip": socket.gethostbyname(socket.gethostname()), "prefix": 24}]
     except Exception:
         return []
+
+
+def _address_present(alias: str, ip: str) -> bool | None:
+    addresses = _query_ipv4_addresses()
+    if addresses is None:
+        return None
+    return any(address["alias"] == alias and address["ip"] == ip for address in addresses)
 
 
 def _load_state() -> list[dict]:
@@ -174,7 +188,10 @@ def find_orphans() -> list[dict]:
     state = _load_state()
     if not state:
         return []
-    live = {(address["alias"], address["ip"]) for address in list_ipv4_addresses()}
+    addresses = _query_ipv4_addresses()
+    if addresses is None:
+        return []
+    live = {(address["alias"], address["ip"]) for address in addresses}
     return [item for item in state if (item["interface_alias"], item["ip"]) not in live]
 
 
@@ -269,8 +286,10 @@ def add_temp_ip(interface_alias: str, ip: str, prefix: int = 24) -> tuple[bool, 
 
 
 def remove_temp_ip(interface_alias: str, ip: str) -> tuple[bool, str]:
-    live = {(address["alias"], address["ip"]) for address in list_ipv4_addresses()}
-    if (interface_alias, ip) not in live:
+    present = _address_present(interface_alias, ip)
+    if present is None:
+        return False, f"Could not query network addresses before removing {ip}."
+    if not present:
         _forget(interface_alias, ip)
         return True, f"{ip} is already gone from '{interface_alias}'."
 
@@ -285,13 +304,13 @@ def remove_temp_ip(interface_alias: str, ip: str) -> tuple[bool, str]:
             fallback = _run(
                 ["netsh", "interface", "ipv4", "delete", "address", f"name={interface_alias}", f"addr={ip}"]
             )
-            gone = all(
-                not (address["alias"] == interface_alias and address["ip"] == ip) for address in list_ipv4_addresses()
-            )
-            if gone:
+            gone = _address_present(interface_alias, ip)
+            if gone is False:
                 _forget(interface_alias, ip)
                 return True, f"Removed {ip} from '{interface_alias}'."
             output = (((result.stderr or "") + (fallback.stderr or "")).strip())[:300]
+            if gone is None:
+                output = "address query failed after removal"
             return False, f"Could not remove {ip}. {output}"
         script = (
             f"Start-Process netsh -ArgumentList 'interface ipv4 delete address "
@@ -301,53 +320,58 @@ def remove_temp_ip(interface_alias: str, ip: str) -> tuple[bool, str]:
             _run_ps(script, timeout=60)
         except Exception as exc:
             return False, f"Removal elevation failed: {exc}"[:300]
-        gone = all(
-            not (address["alias"] == interface_alias and address["ip"] == ip) for address in list_ipv4_addresses()
-        )
-        if gone:
+        gone = _address_present(interface_alias, ip)
+        if gone is False:
             _forget(interface_alias, ip)
             return True, f"Removed {ip} from '{interface_alias}' (UAC elevation)."
+        if gone is None:
+            return False, f"Removal of {ip} could not be verified because the address query failed."
         return False, f"Removal of {ip} not confirmed. Was UAC denied?"
-    else:
-        command = ["/sbin/ifconfig", interface_alias, "-alias", ip]
-        try:
-            result = _run(command) if is_admin() else _run_admin_macos(command)
-        except Exception as exc:
-            return False, f"Removal elevation failed: {exc}"[:300]
-        gone = all(
-            not (address["alias"] == interface_alias and address["ip"] == ip) for address in list_ipv4_addresses()
-        )
-        if gone:
-            _forget(interface_alias, ip)
-            return True, f"Removed {ip} from '{interface_alias}'."
-        output = ((result.stderr or "") + (result.stdout or "")).strip()[:300]
-        return False, f"Could not remove {ip}: {output}"
+
+    command = ["/sbin/ifconfig", interface_alias, "-alias", ip]
+    try:
+        result = _run(command) if is_admin() else _run_admin_macos(command)
+    except Exception as exc:
+        return False, f"Removal elevation failed: {exc}"[:300]
+    gone = _address_present(interface_alias, ip)
+    if gone is False:
+        _forget(interface_alias, ip)
+        return True, f"Removed {ip} from '{interface_alias}'."
+    if gone is None:
+        return False, f"Removal of {ip} could not be verified because the address query failed."
+    output = ((result.stderr or "") + (result.stdout or "")).strip()[:300]
+    return False, f"Could not remove {ip}: {output}"
 
 
-_CLEANED = False
+_CLEAN_RUNNING = False
 _CLEAN_LOCK = threading.Lock()
 
 
 def cleanup_all() -> list[str]:
-    """Claim and remove remembered temporary addresses once per process."""
-    global _CLEANED
+    """Remove every currently remembered temporary address."""
+    global _CLEAN_RUNNING
     with _CLEAN_LOCK:
-        claimed = _load_state()
-        _save_state([])
-        if not claimed or _CLEANED:
-            _CLEANED = True
+        if _CLEAN_RUNNING:
             return []
-        _CLEANED = True
-    return [remove_temp_ip(item["interface_alias"], item["ip"])[1] for item in claimed]
+        _CLEAN_RUNNING = True
+    try:
+        claimed = _load_state()
+        return [remove_temp_ip(item["interface_alias"], item["ip"])[1] for item in claimed]
+    finally:
+        with _CLEAN_LOCK:
+            _CLEAN_RUNNING = False
 
 
 def ensure_homes_visible(interface_alias: str, homes: list[str], prefix: int = 24) -> tuple[bool, str]:
     """Add missing secondary addresses, using one elevation prompt."""
+    current = _query_ipv4_addresses()
+    if current is None:
+        return False, "Could not query current IPv4 addresses."
     want: list[tuple[str, str]] = []
     for home in dict.fromkeys(homes):
         parts = home.split(".")
         base = ".".join(parts[:3]) if len(parts) == 4 else home
-        live = {address["ip"] for address in list_ipv4_addresses() if address["alias"] == interface_alias}
+        live = {address["ip"] for address in current if address["alias"] == interface_alias}
         if any(ip.startswith(base + ".") for ip in live):
             continue
         bridge_ip = f"{base}.200"
@@ -357,25 +381,24 @@ def ensure_homes_visible(interface_alias: str, homes: list[str], prefix: int = 2
     if not want:
         return True, "All known subnets are already visible."
 
+    errors: list[str] = []
     if os.name == "nt":
         if is_admin():
-            messages = []
             for _base, bridge_ip in want:
                 ok, message = _ps_add(interface_alias, bridge_ip, prefix)
-                if ok:
-                    _remember(TempIp(interface_alias, bridge_ip, prefix))
-                messages.append(message)
-            return True, " | ".join(messages)
-        mask = _mask_for_prefix(prefix)
-        commands = "; ".join(
-            f'netsh interface ipv4 add address name="{interface_alias}" addr={bridge_ip} mask={mask}'
-            for _, bridge_ip in want
-        )
-        script = f"Start-Process powershell -ArgumentList '-NoProfile -Command \"{commands}\"' -Verb RunAs -Wait"
-        try:
-            _run_ps(script, timeout=90)
-        except Exception as exc:
-            return False, f"Elevation failed: {exc}"[:200]
+                if not ok:
+                    errors.append(message)
+        else:
+            mask = _mask_for_prefix(prefix)
+            commands = "; ".join(
+                f'netsh interface ipv4 add address name="{interface_alias}" addr={bridge_ip} mask={mask}'
+                for _, bridge_ip in want
+            )
+            script = f"Start-Process powershell -ArgumentList '-NoProfile -Command \"{commands}\"' -Verb RunAs -Wait"
+            try:
+                _run_ps(script, timeout=90)
+            except Exception as exc:
+                errors.append(str(exc)[:200])
     else:
         mask = _mask_for_prefix(prefix)
         commands = [["/sbin/ifconfig", interface_alias, "alias", bridge_ip, "netmask", mask] for _, bridge_ip in want]
@@ -384,24 +407,31 @@ def ensure_homes_visible(interface_alias: str, homes: list[str], prefix: int = 2
                 for command in commands:
                     result = _run(command)
                     if result.returncode != 0:
-                        return False, ((result.stderr or "") + (result.stdout or "")).strip()[:300]
+                        errors.append(((result.stderr or "") + (result.stdout or "")).strip()[:300])
             else:
                 script = "; ".join(" ".join(shlex.quote(argument) for argument in command) for command in commands)
                 # Run one shell with all commands so the user sees one prompt.
                 result = _run_admin_macos(["/bin/sh", "-c", script])
                 if result.returncode != 0:
-                    return False, ((result.stderr or "") + (result.stdout or "")).strip()[:300]
+                    errors.append(((result.stderr or "") + (result.stdout or "")).strip()[:300])
         except Exception as exc:
-            return False, f"Elevation failed: {exc}"[:200]
+            errors.append(str(exc)[:200])
 
-    live = {(address["alias"], address["ip"]) for address in list_ipv4_addresses()}
+    live_addresses = _query_ipv4_addresses()
+    if live_addresses is None:
+        return False, "Bridge commands ran, but the address list could not be verified."
+    live = {(address["alias"], address["ip"]) for address in live_addresses}
     done = [bridge_ip for _, bridge_ip in want if (interface_alias, bridge_ip) in live]
     for _, bridge_ip in want:
         if (interface_alias, bridge_ip) in live:
             _remember(TempIp(interface_alias, bridge_ip, prefix))
-    if done:
+    if len(done) == len(want) and not errors:
         return True, f"Bridge built ({', '.join(done)}) on '{interface_alias}'."
-    return False, "Elevation finished, but the addresses are not visible."
+    detail = " | ".join(error for error in errors if error)
+    return False, (
+        f"Bridge incomplete ({', '.join(done) or 'none'} of {', '.join(ip for _, ip in want)})"
+        + (f": {detail}" if detail else "")
+    )
 
 
 def ensure_subnet_visible(interface_alias: str, subnet_ip: str = "192.168.0.200", prefix: int = 24) -> tuple[bool, str]:
@@ -530,17 +560,20 @@ def list_adapters() -> list[dict]:
         return []
 
 
+def _is_physical_ethernet(adapter: dict) -> bool:
+    name = f"{adapter.get('mediatype', '')} {adapter.get('desc', '')}".lower()
+    return (
+        "802.3" in name or "ethernet" in name or "thunderbolt" in name or "usb 10/100/1000" in name or "usb lan" in name
+    ) and "wi-fi" not in name
+
+
 def best_bridge_iface() -> str | None:
     """Choose a physical Ethernet adapter, preferably with link."""
     try:
         adapters = list_adapters()
     except Exception:
         return None
-    ethernet = [
-        adapter
-        for adapter in adapters
-        if ("802.3" in adapter["mediatype"] or adapter["mediatype"].lower() == "ethernet") and not adapter["virtual"]
-    ]
+    ethernet = [adapter for adapter in adapters if _is_physical_ethernet(adapter) and not adapter["virtual"]]
     for adapter in ethernet:
         if adapter["status"].lower() == "up":
             return adapter["alias"]

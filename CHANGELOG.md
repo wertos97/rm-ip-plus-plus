@@ -14,6 +14,15 @@
 - Thumbnail refresh no longer moves the camera or overwrites presets.
 - Windows keeps the legacy temporary thumbnail and bridge-state paths.
 - Network cleanup verifies address removal before forgetting cleanup state.
+- macOS ARP parsing accepts unpadded MAC addresses.
+- macOS bridge detects USB and Thunderbolt Ethernet adapters.
+- macOS cleanup retries for addresses added after startup.
+- Windows Edge profile lookup uses a valid PowerShell query.
+- Config loading tolerates valid JSON that is not an object.
+- macOS icon generation emits a complete standard iconset.
+- macOS builds fail if the app is not arm64.
+- SSDP fallback enables broadcast sockets.
+- Windows build fails on native command errors and removes stale executables.
 - Shots now save against the camera IP instead of the tab label.
 - Preset saves keep the name entered by the user.
 - Generated thumbnails are no longer deleted from the cache.
