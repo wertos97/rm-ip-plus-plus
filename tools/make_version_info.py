@@ -2,6 +2,7 @@
 
 Usage:  python tools/make_version_info.py
 """
+
 from __future__ import annotations
 
 import os

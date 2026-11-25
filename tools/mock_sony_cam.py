@@ -1,24 +1,30 @@
-"""Mock kamery Sony do testow BEZ sprzetu.
+"""Mock Sony camera for hardware-free testing.
 
-Stawia na 127.0.0.1:
-  - HTTP 8080: '/' + '/command/inquiry.cgi?inq=network' + '/command/network.cgi?...'
-  - TCP 52381: fake VISCA (odpowiada ACK 90 41 FF na kazda ramke)
+Listens on 127.0.0.1:
+  - HTTP 8080: /, inquiry.cgi and network.cgi
+  - TCP 52381: fake VISCA, replying 90 41 FF to each frame
 
-Uzycie:
+Usage:
   python tools/mock_sony_cam.py
-Potem w RM IP++: CIDR/skan reczny 127.0.0.1 albo szybki skan po dopisaniu
-127.0.0.1 do LIKELY_DEFAULTS - albo po prostu test E2E ponizej.
+
+Add 127.0.0.1 manually in RM IP++, or run the local end-to-end check below.
 """
+
 from __future__ import annotations
 
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
-STATE = {"IpAddress": "127.0.0.1", "Subnetmask": "255.255.255.0",
-         "DefaultGateway": "127.0.0.1", "Dhcp": "off",
-         "CameraName": "MOCK-X400", "ModelName": "SRG-X400-MOCK"}
+STATE = {
+    "IpAddress": "127.0.0.1",
+    "Subnetmask": "255.255.255.0",
+    "DefaultGateway": "127.0.0.1",
+    "Dhcp": "off",
+    "CameraName": "MOCK-X400",
+    "ModelName": "SRG-X400-MOCK",
+}
 
 
 class H(BaseHTTPRequestHandler):

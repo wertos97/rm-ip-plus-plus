@@ -7,6 +7,7 @@ Read:
   GET /command/inquiry.cgi?inq=network  -> network parameters / model
 Authentication: digest (default admin/admin).
 """
+
 from __future__ import annotations
 
 import requests
@@ -19,14 +20,25 @@ TIMEOUT = 6
 # Fields present in a real inquiry.cgi?inq=network reply (SRG/BRC).
 # HTTP 200 with "key=value" alone is not enough - a hotel router or Synology NAS
 # answer the same way, and their HTML contains accidental key=value pairs.
-SONY_NET_KEYS = {"ipaddress", "subnetmask", "defaultgateway", "dhcp", "dns",
-                 "hostname", "modelname", "cameraname", "macaddress", "mac",
-                 "serialnumber", "deviceuniqueid", "softversion"}
+SONY_NET_KEYS = {
+    "ipaddress",
+    "subnetmask",
+    "defaultgateway",
+    "dhcp",
+    "dns",
+    "hostname",
+    "modelname",
+    "cameraname",
+    "macaddress",
+    "mac",
+    "serialnumber",
+    "deviceuniqueid",
+    "softversion",
+}
 
 
 class SonyCamera:
-    def __init__(self, ip: str, user: str = DEFAULT_USER, password: str = DEFAULT_PASSWORD,
-                 http_port: int = 80):
+    def __init__(self, ip: str, user: str = DEFAULT_USER, password: str = DEFAULT_PASSWORD, http_port: int = 80):
         self.ip = ip
         self.user = user
         self.password = password
@@ -46,8 +58,12 @@ class SonyCamera:
 
     def _get(self, path: str, timeout: float = TIMEOUT):
         # browser headers are required - without them the camera returns 403
-        return requests.get(self.base() + path, headers={**self.BROWSER_HEADERS, "Referer": self.base() + "/"},
-                            auth=HTTPDigestAuth(self.user, self.password), timeout=timeout)
+        return requests.get(
+            self.base() + path,
+            headers={**self.BROWSER_HEADERS, "Referer": self.base() + "/"},
+            auth=HTTPDigestAuth(self.user, self.password),
+            timeout=timeout,
+        )
 
     def ping_http(self) -> tuple[bool, str]:
         try:
@@ -91,11 +107,11 @@ class SonyCamera:
             except Exception:
                 pass
             if "ModelName" not in out:
-                # BRC-AM7 has no inqjs=license - model from inq=viewermode (CGI 2.0)
+                # CGI 2.0 exposes ModelName through the system inquiry.
                 try:
-                    rv = self._get("/command/inquiry.cgi?inq=viewermode", timeout=timeout)
-                    if rv.status_code == 200:
-                        for line in rv.text.replace(",", "\n").replace("&", "\n").splitlines():
+                    rs = self._get("/command/inquiry.cgi?inq=system", timeout=timeout)
+                    if rs.status_code == 200:
+                        for line in rs.text.replace(",", "\n").replace("&", "\n").splitlines():
                             if "ModelName" in line and "=" in line:
                                 out["ModelName"] = line.split("=", 1)[1].strip().strip("'\"")
                                 if out["ModelName"]:
@@ -103,8 +119,7 @@ class SonyCamera:
                 except Exception:
                     pass
             if not any(k.lower() in SONY_NET_KEYS for k in out):
-                return False, ("HTTP 200, but no Sony reply fields (not a "
-                               "camera - e.g. router, NAS, captive portal).")
+                return False, ("HTTP 200, but no Sony reply fields (not a camera - e.g. router, NAS, captive portal).")
             return True, out
         except Exception as e:
             return False, str(e)[:300]

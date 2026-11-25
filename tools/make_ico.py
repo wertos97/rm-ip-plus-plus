@@ -5,6 +5,7 @@ render PNG-compressed entries below 256 px reliably. 128/256 keep PNG.
 
 Usage:  python tools/make_ico.py
 """
+
 import os
 import struct
 import sys
@@ -51,8 +52,7 @@ def bmp_entry(img: QImage) -> bytes:
             xor += bytes((c.blue(), c.green(), c.red(), c.alpha()))
     mask_row = ((size + 31) // 32) * 4
     and_mask = bytearray(mask_row * size)  # zeros = opaque (alpha channel rules)
-    header = struct.pack("<IiiHHIIiiII", 40, size, size * 2, 1, 32, 0,
-                         len(xor) + len(and_mask), 0, 0, 0, 0)
+    header = struct.pack("<IiiHHIIiiII", 40, size, size * 2, 1, 32, 0, len(xor) + len(and_mask), 0, 0, 0, 0)
     return header + bytes(xor) + bytes(and_mask)
 
 

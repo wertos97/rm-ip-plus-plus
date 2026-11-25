@@ -4,6 +4,7 @@ Windows 11 resolves the taskbar icon through the shortcut registered for the
 app's AUMID; a plain window icon is not always enough for unpackaged apps.
 No external dependencies (IShellLinkW + IPropertyStore via ctypes).
 """
+
 from __future__ import annotations
 
 import ctypes
@@ -17,8 +18,12 @@ STGM_READ = 0x00000000
 
 
 class GUID(ctypes.Structure):
-    _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
-                ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+    _fields_ = [
+        ("Data1", wintypes.DWORD),
+        ("Data2", wintypes.WORD),
+        ("Data3", wintypes.WORD),
+        ("Data4", ctypes.c_ubyte * 8),
+    ]
 
 
 class PROPERTYKEY(ctypes.Structure):
@@ -26,9 +31,14 @@ class PROPERTYKEY(ctypes.Structure):
 
 
 class PROPVARIANT(ctypes.Structure):
-    _fields_ = [("vt", ctypes.c_ushort), ("r1", ctypes.c_ushort),
-                ("r2", ctypes.c_ushort), ("r3", ctypes.c_ushort),
-                ("p", ctypes.c_void_p), ("p2", ctypes.c_void_p)]
+    _fields_ = [
+        ("vt", ctypes.c_ushort),
+        ("r1", ctypes.c_ushort),
+        ("r2", ctypes.c_ushort),
+        ("r3", ctypes.c_ushort),
+        ("p", ctypes.c_void_p),
+        ("p2", ctypes.c_void_p),
+    ]
 
 
 def _guid(text: str) -> GUID:
@@ -82,9 +92,9 @@ def _co_init() -> None:
 
 def _new_shell_link():
     ptr = ctypes.c_void_p()
-    hr = ole32.CoCreateInstance(ctypes.byref(CLSID_SHELLLINK), None,
-                                CLSCTX_INPROC_SERVER,
-                                ctypes.byref(IID_ISHELLLINKW), ctypes.byref(ptr))
+    hr = ole32.CoCreateInstance(
+        ctypes.byref(CLSID_SHELLLINK), None, CLSCTX_INPROC_SERVER, ctypes.byref(IID_ISHELLLINKW), ctypes.byref(ptr)
+    )
     if hr != 0 or not ptr.value:
         raise OSError(f"CoCreateInstance failed: 0x{hr & 0xFFFFFFFF:08x}")
     return ptr
@@ -92,9 +102,9 @@ def _new_shell_link():
 
 def _query(obj, iid):
     out = ctypes.c_void_p()
-    hr = _call(obj, SL_QUERYINTERFACE, ctypes.HRESULT,
-               ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p))(
-        obj, ctypes.byref(iid), ctypes.byref(out))
+    hr = _call(obj, SL_QUERYINTERFACE, ctypes.HRESULT, ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p))(
+        obj, ctypes.byref(iid), ctypes.byref(out)
+    )
     if hr != 0 or not out.value:
         raise OSError(f"QueryInterface failed: 0x{hr & 0xFFFFFFFF:08x}")
     return out
@@ -109,14 +119,13 @@ def shortcut_target(lnk_path: str) -> str:
     persist = None
     try:
         persist = _query(link, IID_IPERSISTFILE)
-        hr = _call(persist, PF_LOAD, ctypes.HRESULT,
-                   wintypes.LPCWSTR, wintypes.DWORD)(persist, lnk_path, STGM_READ)
+        hr = _call(persist, PF_LOAD, ctypes.HRESULT, wintypes.LPCWSTR, wintypes.DWORD)(persist, lnk_path, STGM_READ)
         if hr != 0:
             return ""
         buf = ctypes.create_unicode_buffer(1024)
-        hr = _call(link, SL_GETPATH, ctypes.HRESULT, wintypes.LPWSTR,
-                   ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)(
-            link, buf, 1024, None, 0)
+        hr = _call(link, SL_GETPATH, ctypes.HRESULT, wintypes.LPWSTR, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)(
+            link, buf, 1024, None, 0
+        )
         return buf.value if hr == 0 else ""
     finally:
         if persist is not None:
@@ -124,8 +133,7 @@ def shortcut_target(lnk_path: str) -> str:
         _release(link)
 
 
-def ensure_shortcut(lnk_path: str, target: str, icon: str, aumid: str,
-                    description: str = "RM IP++") -> bool:
+def ensure_shortcut(lnk_path: str, target: str, icon: str, aumid: str, description: str = "RM IP++") -> bool:
     """Create/update the shortcut when missing or pointing elsewhere.
 
     Returns True when the file was written.
@@ -141,21 +149,19 @@ def ensure_shortcut(lnk_path: str, target: str, icon: str, aumid: str,
     try:
         _call(link, SL_SETPATH, ctypes.HRESULT, wintypes.LPCWSTR)(link, target)
         _call(link, SL_SETDESCRIPTION, ctypes.HRESULT, wintypes.LPCWSTR)(link, description)
-        _call(link, SL_SETICONLOCATION, ctypes.HRESULT,
-              wintypes.LPCWSTR, ctypes.c_int)(link, icon, 0)
+        _call(link, SL_SETICONLOCATION, ctypes.HRESULT, wintypes.LPCWSTR, ctypes.c_int)(link, icon, 0)
         store = _query(link, IID_IPROPERTYSTORE)
         buf = ctypes.create_unicode_buffer(aumid)
         pv = PROPVARIANT()
         pv.vt = VT_LPWSTR
         pv.p = ctypes.cast(buf, ctypes.c_void_p)
-        hr = _call(store, PS_SETVALUE, ctypes.HRESULT,
-                   ctypes.POINTER(PROPERTYKEY), ctypes.POINTER(PROPVARIANT))(
-            store, ctypes.byref(PKEY_APPID), ctypes.byref(pv))
+        hr = _call(store, PS_SETVALUE, ctypes.HRESULT, ctypes.POINTER(PROPERTYKEY), ctypes.POINTER(PROPVARIANT))(
+            store, ctypes.byref(PKEY_APPID), ctypes.byref(pv)
+        )
         if hr == 0:
             _call(store, PS_COMMIT, ctypes.HRESULT)(store)
         persist = _query(link, IID_IPERSISTFILE)
-        hr = _call(persist, PF_SAVE, ctypes.HRESULT,
-                   wintypes.LPCWSTR, wintypes.BOOL)(persist, lnk_path, True)
+        hr = _call(persist, PF_SAVE, ctypes.HRESULT, wintypes.LPCWSTR, wintypes.BOOL)(persist, lnk_path, True)
         return hr == 0
     finally:
         if store is not None:

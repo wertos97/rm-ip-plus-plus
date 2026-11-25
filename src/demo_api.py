@@ -5,16 +5,17 @@ in memory: PTZ moves update a virtual position, presets and exposure settings
 are stored locally, and still() renders a synthetic frame so preset thumbnails
 also work. No sockets, no ports, no camera traffic.
 """
+
 from __future__ import annotations
 
 DEMO_IP = "demo"
 
 # SRG units: pan/tilt 16-bit signed, 1 unit = 1/51.2 deg; zoom 0x4000 = 20x
 _PAN_LIMIT = int(170 * 51.2)
-_TILT_MIN = int(-30 * 51.2)
+_TILT_MIN = int(-20 * 51.2)
 _TILT_MAX = int(90 * 51.2)
 _ZOOM_MAX = 0x4000
-_FOCUS_MAX = 0xF7FF
+_FOCUS_MAX = 0xF000
 
 
 def _clamp(v: int, lo: int, hi: int) -> int:
@@ -38,17 +39,17 @@ class DemoCameraAPI:
     def __init__(self, ip: str = DEMO_IP, *args, **kwargs):
         self.ip = ip
         self.http_port = 0
-        self._pan = 0          # units (signed)
+        self._pan = 0  # units (signed)
         self._tilt = 0
-        self._zoom = 0         # 0..0x4000 -> 1..20x
-        self._focus = 0x8000   # mid range
+        self._zoom = 0  # 0..0x4000 -> 1..20x
+        self._focus = 0x8000  # mid range
         self._presets: dict[int, dict] = {}
         self._imaging = {
             "ExposureMode": "auto",
-            "ExposureIris": 20,          # F3.1
-            "ExposureGain": 1,           # 0 dB
+            "ExposureIris": 20,  # F3.1
+            "ExposureGain": 1,  # 0 dB
             "ExposureExposureTime": 18,  # 1/50
-            "ExposureCompensation": 7,   # 0 dB
+            "ExposureCompensation": 7,  # 0 dB
             "WhiteBalanceMode": "auto",
             "WhiteBalanceCbGain": 128,
             "WhiteBalanceCrGain": 128,
@@ -56,7 +57,6 @@ class DemoCameraAPI:
             "FocusMode": "auto",
         }
 
-    # ---------- PTZ ----------
     def move(self, direction: str, speed: int = 8):
         sp = max(0, min(24, int(speed)))
         step = int((0.8 + 0.35 * sp) * 51.2)
@@ -145,16 +145,14 @@ class DemoCameraAPI:
 
     def status(self, timeout: float = 8):
         return True, {
-            "AbsolutePTZF": (f"{_h16(self._pan)},{_h16(self._tilt)},"
-                             f"{self._zoom:04x},{self._focus:04x}"),
+            "AbsolutePTZF": (f"{_h16(self._pan)},{_h16(self._tilt)},{self._zoom:04x},{self._focus:04x}"),
             "PtzfStatus": "idle",
         }
 
-    # ---------- presets ----------
     def _ptzf(self):
         return [_h16(self._pan), _h16(self._tilt), f"{self._zoom:04x}", f"{self._focus:04x}"]
 
-    def preset_list(self):
+    def preset_list(self, timeout=8):
         return True, {num: p["name"] for num, p in self._presets.items()}
 
     def preset_recall(self, num: int, speed: int | None = None):
@@ -165,8 +163,7 @@ class DemoCameraAPI:
         return True, ""
 
     def preset_set(self, num: int, name: str = "", thumb: str = "on"):
-        self._presets[int(num)] = {"name": name or f"Preset{int(num)}",
-                                   "ptzf": self._ptzf()}
+        self._presets[int(num)] = {"name": name or f"Preset{int(num)}", "ptzf": self._ptzf()}
         return True, ""
 
     def preset_clear(self, num: int):
@@ -186,8 +183,7 @@ class DemoCameraAPI:
     def thumb(self, num: int, timeout: float = 8):
         return self.still()
 
-    # ---------- imaging ----------
-    def imaging(self):
+    def imaging(self, timeout=8):
         return True, dict(self._imaging)
 
     def set_imaging(self, **params):
@@ -206,11 +202,9 @@ class DemoCameraAPI:
         return True, ""
 
     def set_wb_am7(self, mode: str, cb: int, cr: int, offset: int):
-        self._imaging.update({"WhiteBalanceMode": mode,
-                              "WhiteBalanceCbGain": cb, "WhiteBalanceCrGain": cr})
+        self._imaging.update({"WhiteBalanceMode": mode, "WhiteBalanceCbGain": cb, "WhiteBalanceCrGain": cr})
         return True, ""
 
-    # ---------- simulated still (for preset thumbnails) ----------
     def still(self, timeout: float = 8):
         """Render a synthetic JPEG frame reflecting the virtual position."""
         try:
@@ -225,25 +219,21 @@ class DemoCameraAPI:
         img.fill(QColor("#0e1114"))
         p = QPainter(img)
         p.setRenderHint(QPainter.Antialiasing, True)
-        # grid
         p.setPen(QPen(QColor("#1d2329"), 1))
         for x in range(0, w, 40):
             p.drawLine(x, 0, x, h)
         for y in range(0, h, 40):
             p.drawLine(0, y, w, y)
-        # zoom frame (smaller = tighter shot)
         zx = 1.0 + 19.0 * (self._zoom / _ZOOM_MAX)
         box_w = int(w * 0.55 / max(1.0, zx / 3.0))
         box_h = int(box_w * 9 / 16)
         p.setPen(QPen(QColor("#ff9e2c"), 2))
         p.drawRect((w - box_w) // 2, (h - box_h) // 2, box_w, box_h)
-        # crosshair at virtual pan/tilt
         cx = int(w / 2 + (self._pan / 51.2) / 170.0 * (w / 2 - 40))
         cy = int(h / 2 - (self._tilt / 51.2) / 90.0 * (h / 2 - 40))
         p.setPen(QPen(QColor("#8fce8f"), 2))
         p.drawLine(cx - 18, cy, cx + 18, cy)
         p.drawLine(cx, cy - 18, cx, cy + 18)
-        # labels
         p.setPen(QColor("#f2f2f2"))
         f = QFont()
         f.setPointSize(13)
@@ -254,8 +244,7 @@ class DemoCameraAPI:
         f2.setPointSize(10)
         p.setFont(f2)
         p.setPen(QColor("#9aa0a6"))
-        p.drawText(16, h - 34,
-                   f"Pan {self._pan / 51.2:+.1f} deg   Tilt {self._tilt / 51.2:+.1f} deg")
+        p.drawText(16, h - 34, f"Pan {self._pan / 51.2:+.1f} deg   Tilt {self._tilt / 51.2:+.1f} deg")
         p.drawText(16, h - 16, f"Zoom {zx:.1f}x   Focus {self._focus:04x}   (simulated)")
         p.end()
         buf = QBuffer()

@@ -7,6 +7,7 @@ Resolution order for a camera IP:
   4. BRC-AM7 default: admin / Admin123,
   5. legacy Sony default: admin / admin.
 """
+
 from __future__ import annotations
 
 SRG_DEFAULT = ("admin", "admin123")

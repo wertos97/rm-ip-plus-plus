@@ -2,19 +2,20 @@
 
 SRG-X400 / BRC-X400: verified live (HTTP digest auth) - Move/stop,
 RelativePanTilt, presets, imaging.
-BRC-AM7: mapped per "CGI Command List" v2.0 - PanTiltMove/ZoomMove/
+BRC-AM7: mapped per "CGI Command List" - PanTiltMove/ZoomMove/
 PanTiltSpeedMode/AbsoluteFocus (steps), 20-bit coordinates, different imaging
-units. Model detection is automatic (inq=viewermode -> ModelName).
+units. Model detection is automatic (inq=system -> ModelName).
 """
+
 from __future__ import annotations
 
 import requests
 from requests.auth import HTTPDigestAuth
 
 try:
-    from .human import AM7_IRIS_CLOSE, AM7_IRIS_MIN, AM7_IRIS_MAX
+    from .human import AM7_IRIS_CLOSE, AM7_IRIS_MAX, AM7_IRIS_MIN
 except ImportError:  # running without the package
-    from human import AM7_IRIS_CLOSE, AM7_IRIS_MIN, AM7_IRIS_MAX  # noqa: E402
+    from human import AM7_IRIS_CLOSE, AM7_IRIS_MAX, AM7_IRIS_MIN  # noqa: E402
 
 TIMEOUT = 8
 BROWSER_HEADERS = {
@@ -24,7 +25,7 @@ BROWSER_HEADERS = {
 }
 
 # BRC-AM7
-AM7_STEP_SCALE = 5.5          # UI step (16-bit SRG) -> 20-bit 1/1000° (AM7)
+AM7_STEP_SCALE = 1000 / 51.2  # SRG units per degree -> AM7 units per degree.
 AM7_WB_MODES = ("atw", "memory_a", "preset")
 
 
@@ -43,32 +44,41 @@ def _to_signed(hex4: str) -> int:
     return v - 0x10000 if v >= 0x8000 else v
 
 
+def _preset_name(value: str) -> str:
+    name = str(value or "")
+    if len(name) > 32:
+        raise ValueError("Preset name is limited to 32 characters.")
+    if any(ch in name for ch in ",&\r\n\x00"):
+        raise ValueError("Preset name cannot contain commas, ampersands or control characters.")
+    return name
+
+
 class CameraAPI:
     def __init__(self, ip: str, user: str, password: str, http_port: int = 80):
         self.ip = ip
         self.user = user
         self.password = password
         self.http_port = http_port
-        self._family: str | None = None      # 'srg' | 'am7' | None (auto)
+        self._family: str | None = None  # 'srg' | 'am7' | None (auto)
         self._family_try = 0.0
-        self._speedstep: str | None = None   # AM7: normal/extended
-        self._focus_val: int | None = None   # AM7: cached focus position
+        self._speedstep: str | None = None  # AM7: normal/extended
+        self._focus_val: int | None = None  # AM7: cached focus position
         self._focus_t = 0.0
 
-    # ---------- model detection ----------
     @property
     def family(self) -> str:
         """'srg' (SRG/BRC-X400...) or 'am7' (BRC-AM7). Detected once per session."""
         if self._family:
             return self._family
         import time
+
         now = time.monotonic()
         if now - self._family_try < 30.0:
             return "srg"  # camera is silent - do not cache, retry in a moment
         self._family_try = now
-        ok, data = self.inquiry("viewermode", timeout=3)
+        ok, data = self.inquiry("system", timeout=3)
         if ok and isinstance(data, dict):
-            # camera answered viewermode -> not an AM7 unless the model says otherwise
+            # ModelName is returned by the system inquiry on CGI 2.0 cameras.
             name = (data.get("ModelName") or "").upper()
             self._family = "am7" if "AM7" in name else "srg"
             if self._family == "am7":
@@ -96,8 +106,12 @@ class CameraAPI:
         return f"http://{self.ip}:{self.http_port}"
 
     def _get(self, path: str, timeout: float = TIMEOUT):
-        return requests.get(self.base() + path, headers={**BROWSER_HEADERS, "Referer": self.base() + "/"},
-                            auth=HTTPDigestAuth(self.user, self.password), timeout=timeout)
+        return requests.get(
+            self.base() + path,
+            headers={**BROWSER_HEADERS, "Referer": self.base() + "/"},
+            auth=HTTPDigestAuth(self.user, self.password),
+            timeout=timeout,
+        )
 
     def cmd(self, cgi: str, query: str, timeout: float = TIMEOUT) -> tuple[bool, str]:
         """Sends command/xxx.cgi?... Returns (ok, text). 200/204 = ok."""
@@ -126,7 +140,6 @@ class CameraAPI:
             return False, txt
         return True, self.parse_kv(txt)
 
-    # ---------- PTZ ----------
     def move(self, direction: str, speed: int) -> tuple[bool, str]:
         """direction: left/right/up/down/up-left/... speed 0-24 (0=auto per zoom).
         25+ is a service range - clamp so movement is not broken."""
@@ -153,6 +166,7 @@ class CameraAPI:
     def focus_step(self, direction: str, step: int = 0x0400, timeout: float = 2.0) -> tuple[bool, str]:
         """BRC-AM7: focus step via AbsoluteFocus (near=+, far=-)."""
         import time
+
         now = time.monotonic()
         if self._focus_val is None or now - self._focus_t > 1.5:
             ok, pt = self.inquiry("ptzf", timeout=timeout)
@@ -186,8 +200,9 @@ class CameraAPI:
         if self.family == "am7":
             if what == "focus":
                 return True, ""  # focus steps - there is nothing to stop
-            tests = ("ZoomMove=stop", "ZoomMove=stop,0") if what == "zoom" \
-                else ("PanTiltMove=stop", "PanTiltMove=stop,0,0")
+            tests = (
+                ("ZoomMove=stop", "ZoomMove=stop,0") if what == "zoom" else ("PanTiltMove=stop", "PanTiltMove=stop,0,0")
+            )
             last: tuple[bool, str] = (False, "?")
             for q in tests:  # the camera may require a speed value - try both variants
                 last = self.cmd("ptzf.cgi", q)
@@ -210,8 +225,9 @@ class CameraAPI:
 
     def relative_pt(self, pan_hex: str, tilt_hex: str, speed: int) -> tuple[bool, str]:
         if self.family == "am7":
-            return self.cmd("ptzf.cgi",
-                            f"RelativePanTilt={pan_hex},{tilt_hex},{max(1, self._speed_for_ui(speed) or 1)}")
+            return self.cmd(
+                "ptzf.cgi", f"RelativePanTilt={pan_hex},{tilt_hex},{max(1, self._speed_for_ui(speed) or 1)}"
+            )
         return self.cmd("ptzf.cgi", f"RelativePanTilt={pan_hex},{tilt_hex},{int(speed)}")
 
     def relative_zoom(self, delta_hex: str) -> tuple[bool, str]:
@@ -227,20 +243,19 @@ class CameraAPI:
     def slow_mode(self, on: bool) -> tuple[bool, str]:
         if self.family == "am7":
             return self.cmd("ptzf.cgi", f"PanTiltSpeedMode={'slow' if on else 'normal'}")
-        return self.cmd("ptzf.cgi", f"SlowPanTiltMode={'on' if on else 'off'}")
+        return self.cmd("camera.cgi", f"SlowPanTiltMode={'on' if on else 'off'}")
 
     def set_focus_mode(self, mode: str) -> tuple[bool, str]:
         if self.family == "am7":
-            return self.cmd("ptzf.cgi", f"FocusMode={mode}")  # AM7: item in ptzf.cgi
-        return self.set_imaging(FocusMode=mode)
+            return self.cmd("ptzf.cgi", f"FocusMode={mode}")
+        return self.cmd("camera.cgi", f"FocusMode={mode}")
 
     def status(self, timeout: float = TIMEOUT) -> tuple[bool, dict | str]:
         return self.inquiry("ptzf", timeout=timeout)
 
-    # ---------- presets ----------
-    def preset_list(self) -> tuple[bool, dict]:
+    def preset_list(self, timeout: float = TIMEOUT) -> tuple[bool, dict]:
         """Returns {num: name} for defined presets (parses PresetName=1,Preset1,2,...)."""
-        ok, data = self.inquiry("presetposition")
+        ok, data = self.inquiry("presetposition", timeout=timeout)
         if not ok:
             return False, {}
         names: dict[int, str] = {}
@@ -261,14 +276,21 @@ class CameraAPI:
         return self.cmd("presetposition.cgi", q)
 
     def preset_set(self, num: int, name: str = "", thumb: str = "on") -> tuple[bool, str]:
+        try:
+            name = _preset_name(name)
+        except ValueError as exc:
+            return False, str(exc)
         return self.cmd("presetposition.cgi", f"PresetSet={int(num)},{name},{thumb}")
 
     def thumb(self, num: int, timeout: float = TIMEOUT) -> bytes | None:
         """Preset thumbnail from the camera (64x36!) or None. Poor - prefer still()."""
         try:
-            r = requests.get(f"{self.base()}/preset/presetimg{int(num)}.jpg",
-                             headers={**BROWSER_HEADERS, "Referer": self.base() + "/"},
-                             auth=HTTPDigestAuth(self.user, self.password), timeout=timeout)
+            r = requests.get(
+                f"{self.base()}/preset/presetimg{int(num)}.jpg",
+                headers={**BROWSER_HEADERS, "Referer": self.base() + "/"},
+                auth=HTTPDigestAuth(self.user, self.password),
+                timeout=timeout,
+            )
             if r.status_code == 200 and r.headers.get("Content-Type", "").startswith("image"):
                 return r.content
         except Exception:
@@ -279,9 +301,12 @@ class CameraAPI:
         """Full JPEG frame (current image) - for sharp thumbnails."""
         for path in ("/oneshotimage1", "/oneshotimage2"):
             try:
-                r = requests.get(f"{self.base()}{path}",
-                                 headers={**BROWSER_HEADERS, "Referer": self.base() + "/"},
-                                 auth=HTTPDigestAuth(self.user, self.password), timeout=timeout)
+                r = requests.get(
+                    f"{self.base()}{path}",
+                    headers={**BROWSER_HEADERS, "Referer": self.base() + "/"},
+                    auth=HTTPDigestAuth(self.user, self.password),
+                    timeout=timeout,
+                )
                 if r.status_code == 200 and len(r.content) > 10000:
                     return r.content
             except Exception:
@@ -292,6 +317,10 @@ class CameraAPI:
         return self.cmd("presetposition.cgi", f"PresetClear={int(num)}")
 
     def preset_rename(self, num: int, name: str) -> tuple[bool, str]:
+        try:
+            name = _preset_name(name)
+        except ValueError as exc:
+            return False, str(exc)
         return self.cmd("presetposition.cgi", f"PresetName={int(num)},{name}")
 
     def preset_speed_mode(self, mode: str, common: int = 4) -> tuple[bool, str]:
@@ -303,9 +332,8 @@ class CameraAPI:
             return self.cmd("presetposition.cgi", f"CommonSpeed={int(common)}")
         return True, m
 
-    # ---------- image ----------
-    def imaging(self) -> tuple[bool, dict | str]:
-        return self.inquiry("imaging")
+    def imaging(self, timeout: float = TIMEOUT) -> tuple[bool, dict | str]:
+        return self.inquiry("imaging", timeout=timeout)
 
     def set_imaging(self, **params) -> tuple[bool, str]:
         q = "&".join(f"{k}={v}" for k, v in params.items())
@@ -313,15 +341,18 @@ class CameraAPI:
 
     def wb_onepush(self):
         if self.family == "am7":
-            return self.cmd("imaging.cgi", "WhiteBalanceWBSet=press")
+            return self.cmd("cameraoperation.cgi", "WhiteBalanceWBSet=press")
         return self.cmd("imaging.cgi", "WhiteBalanceOnePushTrg=on")
 
     def wb_onepush_release(self):
         """BRC-AM7: releases the WB Set button 'press' (momentary)."""
-        return self.cmd("imaging.cgi", "WhiteBalanceWBSet=release")
+        if self.family == "am7":
+            return self.cmd("cameraoperation.cgi", "WhiteBalanceWBSet=release")
+        return True, ""
 
-    # ---------- BRC-AM7: exposure and white balance without ExposureMode ----------
-    def set_exposure_am7(self, mode: str, iris: int, gain: int, shut: int, comp: int) -> tuple[bool, str]:
+    def set_exposure_am7(
+        self, mode: str, iris: int, gain: int, shut: int, comp: int, gain_mode: str = "gain"
+    ) -> tuple[bool, str]:
         """Maps the SRG mode (auto/shutter/iris/manual) to AM7 switches.
 
         auto    -> AutoShutter on, AutoIris on,  AGC on
@@ -330,11 +361,17 @@ class CameraAPI:
         manual  -> everything off
         iris/gain/shutter are sent only where the auto function is disabled.
         """
+        if mode == "manual" and gain_mode == "iso":
+            return False, "Camera is in ISO mode. Switch to Gain mode before using manual exposure."
         auto_shutter = mode in ("auto", "iris")
         auto_iris = mode in ("auto", "shutter")
         agc = mode != "manual"
-        ok, msg = self.cmd("imaging.cgi", "ExposureAutoShutterEnable={}&ExposureAutoIris={}&ExposureAGCEnable={}".format(
-            "on" if auto_shutter else "off", "on" if auto_iris else "off", "on" if agc else "off"))
+        ok, msg = self.cmd(
+            "imaging.cgi",
+            "ExposureAutoShutterEnable={}&ExposureAutoIris={}&ExposureAGCEnable={}".format(
+                "on" if auto_shutter else "off", "on" if auto_iris else "off", "on" if agc else "off"
+            ),
+        )
         if not ok:
             return ok, msg
         q = f"ExposureCompensation={int(comp)}"

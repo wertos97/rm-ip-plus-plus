@@ -1,0 +1,26 @@
+name: Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Create virtual environment
+        run: python -m venv .venv
+      - name: Run build script
+        run: powershell -ExecutionPolicy Bypass -File build.ps1
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: RMIPpp-windows
+          path: dist/*.exe

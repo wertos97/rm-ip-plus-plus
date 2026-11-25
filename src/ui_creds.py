@@ -1,15 +1,20 @@
 """Login/password dialog shown when a camera rejects the default credentials."""
+
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QVBoxLayout,
 )
 
 
 class CredentialsDialog(QDialog):
-    def __init__(self, parent=None, ip: str = "", user: str = "admin",
-                 error: str = ""):
+    def __init__(self, parent=None, ip: str = "", user: str = "admin", error: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Camera login")
         self.setMinimumWidth(460)
@@ -38,8 +43,9 @@ class CredentialsDialog(QDialog):
         row1.setSpacing(8)
         lb1 = QLabel("Login:")
         lb1.setFixedWidth(70)
-        row1.addWidget(lb1)
         self.e_user = QLineEdit(user)
+        lb1.setBuddy(self.e_user)
+        row1.addWidget(lb1)
         row1.addWidget(self.e_user, 1)
         v.addLayout(row1)
 
@@ -47,9 +53,10 @@ class CredentialsDialog(QDialog):
         row2.setSpacing(8)
         lb2 = QLabel("Password:")
         lb2.setFixedWidth(70)
-        row2.addWidget(lb2)
         self.e_pass = QLineEdit()
+        lb2.setBuddy(self.e_pass)
         self.e_pass.setEchoMode(QLineEdit.Password)
+        row2.addWidget(lb2)
         row2.addWidget(self.e_pass, 1)
         v.addLayout(row2)
 

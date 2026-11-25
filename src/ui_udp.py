@@ -6,13 +6,25 @@ Protocol recovered from RM-IPSetupTool.exe v1.2.0 (see src/sony_udp.py):
 Both go to broadcast 255.255.255.255:52380, so they also work for a camera
 with an address from a different subnet than the computer (without changing the adapter IP).
 """
+
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QDialog, QFileDialog, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy,
-    QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QDialog,
+    QFileDialog,
+    QGridLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QSizePolicy,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
 )
 
 try:
@@ -48,7 +60,7 @@ class WriteWorker(QThread):
 class WriteNetDialog(QDialog):
     """Sets the camera network via UDP broadcast (like Auto IP Setup in Sony)."""
 
-    applied = Signal(dict)   # {"old_ip", "ip", "mac"} - only after ACK
+    applied = Signal(dict)  # {"old_ip", "ip", "mac"} - only after ACK
 
     def __init__(self, parent=None, defaults: dict | None = None, old_ip: str = ""):
         super().__init__(parent)
@@ -80,7 +92,9 @@ class WriteNetDialog(QDialog):
             ("Camera name:", self.e_name),
         )
         for i, (lbl, wdg) in enumerate(rows):
-            g.addWidget(QLabel(lbl), i, 0)
+            label = QLabel(lbl)
+            label.setBuddy(wdg)
+            g.addWidget(label, i, 0)
             g.addWidget(wdg, i, 1)
         if old_ip:
             self.e_ip.setPlaceholderText(old_ip)
@@ -90,11 +104,9 @@ class WriteNetDialog(QDialog):
         self.warn.setStyleSheet("color:#ffb14e;")
         self.warn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         if d.get("writable") is False:
-            self.warn.setText("Note: the camera last reported WRITE:off — the write may be "
-                              "rejected.")
+            self.warn.setText("Note: the camera last reported WRITE:off. The write may be rejected.")
         elif d.get("writable") is None:
-            self.warn.setText("Note: no WRITE data — cannot tell if writing is "
-                              "enabled.")
+            self.warn.setText("Note: no WRITE data. Cannot tell if writing is enabled.")
         self.warn.setVisible(bool(self.warn.text()))
         v.addWidget(self.warn)
 
@@ -142,12 +154,15 @@ class WriteNetDialog(QDialog):
         if not name or len(name) > 16 or any(not (0x20 <= ord(ch) <= 0x7E) for ch in name):
             QMessageBox.warning(self, "Name", "Name: 1-16 ASCII characters (e.g. CAM2).")
             return
-        warn = (f"Camera {mac} will change its network settings to:\n\n"
-                f"    IP:      {ip}\n    Mask:    {mask}\n    Gateway: {gw or '(empty)'}\n"
-                f"    Name:    {name}\n\n"
-                "The camera will lose its old address after the ACK.\n\nContinue?")
-        ans = QMessageBox.warning(self, "Change the camera address", warn,
-                                  QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        warn = (
+            f"Camera {mac} will change its network settings to:\n\n"
+            f"    IP:      {ip}\n    Mask:    {mask}\n    Gateway: {gw or '(empty)'}\n"
+            f"    Name:    {name}\n\n"
+            "The camera will lose its old address after the ACK.\n\nContinue?"
+        )
+        ans = QMessageBox.warning(
+            self, "Change the camera address", warn, QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
         if ans != QMessageBox.Yes:
             return
         self.btn_send.setEnabled(False)
@@ -164,12 +179,11 @@ class WriteNetDialog(QDialog):
         if res.get("ok"):
             who = res.get("reply_mac") or res.get("target_mac") or res.get("mac") or "?"
             self.status.setStyleSheet("color:#8fce8f;")
-            self.status.setText(f"ACK — the camera confirmed the change (MAC {who}).")
-            self.applied.emit({"old_ip": self.old_ip, "ip": res.get("ip", ""),
-                               "mac": who})
+            self.status.setText(f"ACK: the camera confirmed the change (MAC {who}).")
+            self.applied.emit({"old_ip": self.old_ip, "ip": res.get("ip", ""), "mac": who})
         elif kind == "NAK":
             self.status.setStyleSheet("color:#ff7b72;")
-            self.status.setText("NAK — the camera rejected the change.")
+            self.status.setText("NAK: the camera rejected the change.")
         elif kind == "error":
             self.status.setStyleSheet("color:#ff7b72;")
             self.status.setText(f"Error: {res.get('error')}")
@@ -180,7 +194,8 @@ class WriteNetDialog(QDialog):
         for r in replies:
             self.log.appendPlainText(
                 f"{r.get('src_ip', '?'):>15}  {r.get('kind', '?'):<4} "
-                f"mac={r.get('mac') or '-'}  {_raw_text(r.get('raw') or b'')}")
+                f"mac={r.get('mac') or '-'}  {_raw_text(r.get('raw') or b'')}"
+            )
         if not replies:
             self.log.appendPlainText("(0 replies)")
 
@@ -280,12 +295,12 @@ class CamtableDialog(QDialog):
         self.raw.clear()
         for p in pages:
             self.raw.appendPlainText(
-                f"{p.get('src_ip', '?'):>15}  INFO:camtable{p.get('page')}  "
-                f"{_raw_text(p.get('raw') or b'')}")
+                f"{p.get('src_ip', '?'):>15}  INFO:camtable{p.get('page')}  {_raw_text(p.get('raw') or b'')}"
+            )
         for m in misc:
             self.raw.appendPlainText(
-                f"{m.get('src_ip', '?'):>15}  {m.get('kind', '?')}  "
-                f"{_raw_text(m.get('raw') or b'')}")
+                f"{m.get('src_ip', '?'):>15}  {m.get('kind', '?')}  {_raw_text(m.get('raw') or b'')}"
+            )
         if res.get("error"):
             self.head.setText(f"Error: {res['error']}")
             return
@@ -301,8 +316,7 @@ class CamtableDialog(QDialog):
         self._slots = slots
         self._fill(slots)
         filled = sum(1 for e in slots.values() if e.get("mac") or e.get("ip") or e.get("name"))
-        panels = ", ".join(sorted({p.get("panel_mac") or p.get("src_ip") or "?"
-                                   for p in pages}))
+        panels = ", ".join(sorted({p.get("panel_mac") or p.get("src_ip") or "?" for p in pages}))
         self.head.setText(f"Panel: {panels} · filled: {filled}")
 
     def _fill(self, slots: dict):
@@ -330,8 +344,7 @@ class CamtableDialog(QDialog):
         if not slots:
             QMessageBox.information(self, "CSV", "Read the table from the panel first.")
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export table CSV", "rmip_table.csv", "CSV (*.csv);;Wszystkie pliki (*)")
+        path, _ = QFileDialog.getSaveFileName(self, "Export table CSV", "rmip_table.csv", "CSV (*.csv);;All files (*)")
         if not path:
             return
         try:
@@ -344,12 +357,11 @@ class CamtableDialog(QDialog):
         QMessageBox.information(self, "CSV", f"Saved table:\n{path}")
 
     def import_csv(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Load table CSV", "", "CSV (*.csv);;Wszystkie pliki (*)")
+        path, _ = QFileDialog.getOpenFileName(self, "Load table CSV", "", "CSV (*.csv);;All files (*)")
         if not path:
             return
         try:
-            with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+            with open(path, encoding="utf-8-sig", errors="replace") as f:
                 text = f.read()
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "CSV", f"Could not load: {e}")
@@ -357,10 +369,8 @@ class CamtableDialog(QDialog):
         parsed = sony_csv.parse_table_csv(text)
         rows = parsed["rows"]
         if parsed["warnings"]:
-            extra = "" if len(parsed["warnings"]) <= 12 else \
-                f"\n... and {len(parsed['warnings']) - 12} more"
-            QMessageBox.warning(self, "CSV — warnings",
-                                "\n".join(parsed["warnings"][:12]) + extra)
+            extra = "" if len(parsed["warnings"]) <= 12 else f"\n... and {len(parsed['warnings']) - 12} more"
+            QMessageBox.warning(self, "CSV warnings", "\n".join(parsed["warnings"][:12]) + extra)
         if not rows:
             QMessageBox.warning(self, "CSV", "File contains no table rows.")
             return
@@ -368,5 +378,4 @@ class CamtableDialog(QDialog):
         self._slots = {r["slot"]: r for r in rows}
         self._fill(self._slots)
         filled = sum(1 for r in rows if r.get("mac") or r.get("ip") or r.get("name"))
-        self.head.setText(f"Preview from file: {path} · rows: {len(rows)}, "
-                          f"filled: {filled}")
+        self.head.setText(f"Preview from file: {path} · rows: {len(rows)}, filled: {filled}")

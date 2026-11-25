@@ -4,6 +4,7 @@ Zero configuration: no adapter choice (all interfaces at once, virtual ones
 such as Bluetooth/cellular are ignored), the scan starts by itself on launch,
 and the bridge is built automatically only when a camera is unreachable.
 """
+
 from __future__ import annotations
 
 import atexit
@@ -12,46 +13,80 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-from PySide6.QtCore import QEvent, Qt, QThread, Signal, QTimer
-from PySide6.QtGui import QColor, QCursor, QIcon
+from PySide6.QtCore import QEvent, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QColor, QIcon
+
 try:  # ensures the SVG icon engine plugin is bundled by PyInstaller
     from PySide6 import QtSvg  # noqa: F401
 except Exception:
     pass
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
-    QSplitter, QStatusBar, QTableWidget, QTableWidgetItem, QTabWidget,
-    QTextBrowser, QVBoxLayout, QWidget,
+    QApplication,
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QSplitter,
+    QStatusBar,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
 )
 
 try:
-    from . import net_manager as nm
-    from . import discovery as disc
     from . import config_store as cfg
-    from . import diagnostics as diag
-    from . import subnet_bridge as bridge
-    from . import edge_view as ev
-    from . import sony_csv, sony_udp
-    from .version import __version__ as APP_VERSION
-    from .demo_api import DEMO_IP, DemoCameraAPI
     from . import creds as credman
+    from . import diagnostics as diag
+    from . import discovery as disc
+    from . import edge_view as ev
+    from . import net_manager as nm
+    from . import sony_csv, sony_udp
+    from . import subnet_bridge as bridge
+    from .demo_api import DEMO_IP, DemoCameraAPI
     from .ui_creds import CredentialsDialog
-    from .win_shortcut import ensure_shortcut
+    from .version import __version__ as APP_VERSION
+
+    if os.name == "nt":
+        from .win_shortcut import ensure_shortcut
+    else:
+
+        def ensure_shortcut(*args, **kwargs):
+            return False
 except ImportError:
-    import net_manager as nm  # noqa: E402
-    import discovery as disc  # noqa: E402
     import config_store as cfg  # noqa: E402
+    import creds as credman  # noqa: E402
     import diagnostics as diag  # noqa: E402
-    import subnet_bridge as bridge  # noqa: E402
+    import discovery as disc  # noqa: E402
     import edge_view as ev  # noqa: E402
+    import net_manager as nm  # noqa: E402
     import sony_csv  # noqa: E402
     import sony_udp  # noqa: E402
-    from version import __version__ as APP_VERSION  # noqa: E402
+    import subnet_bridge as bridge  # noqa: E402
     from demo_api import DEMO_IP, DemoCameraAPI  # noqa: E402
-    import creds as credman  # noqa: E402
     from ui_creds import CredentialsDialog  # noqa: E402
-    from win_shortcut import ensure_shortcut  # noqa: E402
+    from version import __version__ as APP_VERSION  # noqa: E402
+
+    if os.name == "nt":
+        from win_shortcut import ensure_shortcut  # noqa: E402
+    else:
+
+        def ensure_shortcut(*args, **kwargs):
+            return False
+
+
+def tab_ip(widget, fallback: str = "") -> str:
+    value = widget.property("ip") if widget is not None else None
+    return str(value) if value else fallback
 
 
 class _CenterHint(QLabel):
@@ -61,7 +96,7 @@ class _CenterHint(QLabel):
         super().__init__(text, viewport)
         self.setAlignment(Qt.AlignCenter)
         self.setWordWrap(True)
-        self.setStyleSheet("color:#6f757c; font-size:12px; background:transparent;")
+        self.setStyleSheet("color:#8b9198; font-size:12px; background:transparent;")
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setGeometry(viewport.rect())
         viewport.installEventFilter(self)
@@ -75,68 +110,63 @@ class _CenterHint(QLabel):
 ABOUT_HTML = """
 <style>
   body { color: #f2f2f2; font-size: 13px; }
-  h3 { color: #ff9e2c; margin: 2px 0 2px 0; }
-  h4 { color: #ff9e2c; margin: 16px 0 4px 0; letter-spacing: 1px; }
+  h3 { color: #ff9e2c; margin: 2px 0; }
+  h4 { color: #ff9e2c; margin: 16px 0 4px; }
   li { margin-bottom: 4px; }
   .dim { color: #9aa0a6; }
   .tag { color: #ffd9a0; font-weight: bold; }
 </style>
 <h3>RM IP++ &nbsp;<span class="dim" style="font-size:12px;">v{{VERSION}} &middot; Sony IP camera control</span></h3>
-<p>Windows, PySide6. One window, one tab per camera. No video preview &mdash; the camera
+<p>Windows, PySide6. One window, one tab per camera. No video preview: the camera
 feeds SDI/HDMI to a mixer. The app sends HTTP CGI (Digest) commands and reads camera state.</p>
 
-<h4>FEATURES</h4>
+<h4>Features</h4>
 <ul>
-<li><span class="tag">PTZ</span> &mdash; 8-way pad + HOME. Drive: moves while held
-  (short click = 0.5 s). Step: click = one step (size 1-2000), hold = continuous
-  after 0.3 s. Speed 0-24 (0 = auto, follows zoom).</li>
-<li><span class="tag">Zoom / Focus</span> &mdash; W-/T+ (speed 0-8); Near/Far,
-  One Push AF, auto/manual mode.</li>
-<li><span class="tag">Shots 1-16 + quick 1-6</span> &mdash; store and recall
-  pan/tilt/zoom/focus only (AbsolutePTZF); buttons 1-6 light up the shot
-  matching the current camera position.</li>
-<li><span class="tag">Camera presets</span> &mdash; grid 1-256 (BRC-AM7: 1-100):
-  recall, save, clear, names, thumbnails taken from the camera frame.</li>
-<li><span class="tag">Image</span> &mdash; exposure (mode, iris, gain, shutter,
-  compensation) and white balance (mode, gains, offset); values in camera units
-  (F, dB / EV, 1/..., frames).</li>
-<li><span class="tag">Network</span> &mdash; camera discovery (ARP, SSDP, UDP 52380);
-  IP / mask / gateway / name change over UDP (SET + ACK/NAK); RM-IP500 panel slot
-  table read; Sony-format CSV import/export.</li>
-<li><span class="tag">Login</span> &mdash; per-model defaults (SRG-X400 admin/admin123,
-  BRC-AM7 admin/Admin123); when a camera rejects them the app asks for its login
-  and remembers it for that IP.</li>
-<li><span class="tag">Log</span> &mdash; commands, replies and errors at the bottom
-  of the main window.</li>
+<li><span class="tag">PTZ:</span> 8-way pad and Home. Drive moves while held
+  (a short click lasts 0.5 s). Step moves once per click, then glides after 0.3 s.
+  Speed 0-24, where 0 follows the current zoom.</li>
+<li><span class="tag">Zoom and focus:</span> W/T at speed 0-8, Near/Far,
+  One Push AF and auto/manual focus.</li>
+<li><span class="tag">Shots:</span> 16 local positions and 6 quick shots store
+  pan/tilt/zoom/focus only through AbsolutePTZF. A quick shot lights up when the
+  camera reaches its position.</li>
+<li><span class="tag">Camera presets:</span> 1-256 (BRC-AM7: 1-100) with recall,
+  save, clear, names and thumbnails from the camera frame.</li>
+<li><span class="tag">Image:</span> exposure and white balance with values shown
+  in camera units such as F, dB, EV, shutter speed and frames.</li>
+<li><span class="tag">Network:</span> ARP, SSDP and UDP 52380 discovery; IP, mask,
+  gateway and name changes over UDP; RM-IP500 table read; Sony CSV import/export.</li>
+<li><span class="tag">Login:</span> per-model defaults, with a prompt and per-IP
+  storage when a camera rejects them.</li>
+<li><span class="tag">Log:</span> commands, replies and errors in the main window.</li>
 </ul>
 
-<h4>MODELS</h4>
+<h4>Camera support</h4>
 <ul>
-<li><span class="tag">SRG-X400 / BRC-X400</span> &mdash; verified on SRG-X400
-  (HTTP CGI with digest auth, port 80).</li>
-<li><span class="tag">BRC-AM7</span> &mdash; mapped per Sony &bdquo;CGI Command List&rdquo; v2.0;
-  model detected via inq=viewermode. Command set not yet verified on hardware.</li>
+<li><span class="tag">SRG-X400 / BRC-X400:</span> verified on SRG-X400 with
+  HTTP CGI and Digest authentication on port 80.</li>
+<li><span class="tag">BRC-AM7:</span> mapped from Sony CGI Command List v2.0 and
+  detected through inq=system. Not yet verified on hardware.</li>
 </ul>
 
-<h4>BRC-AM7 &mdash; DIFFERENCES</h4>
+<h4>BRC-AM7 differences</h4>
 <ul>
-<li>Focus Near/Far in steps (AbsoluteFocus); no continuous focus movement over CGI.</li>
-<li>Presets 1-100; recall by number only, no speed.</li>
-<li>No ExposureMode: three auto switches (shutter / iris / AGC); the app
-  combines them into auto / shutter / iris / manual modes.</li>
-<li>Scales: iris CLOSE / F2.8-F11, gain -9 to +36 dB, shutter 50p (1/50-1/8000,
-  64F-2F), angles in 0.001 deg steps, zoom up to 25x.</li>
-<li>White balance: atw / memory_a / preset. One Push AF/WB as press+release.</li>
+<li>Focus Near/Far uses AbsoluteFocus steps. CGI has no continuous focus move.</li>
+<li>Presets 1-100 recall by number. The camera controls recall speed.</li>
+<li>Three auto switches replace ExposureMode: shutter, iris and AGC.</li>
+<li>Units differ: iris CLOSE/F2.8-F11, gain -9 to +36 dB, 50p shutter,
+  0.001 degree angles and zoom up to 25x.</li>
+<li>White balance uses atw, memory_a or preset. One Push AF/WB uses press and release.</li>
+<li>In ISO mode, Gain is camera-controlled and manual exposure reports a clear error.</li>
 </ul>
 
-<h4>LIMITATIONS</h4>
+<h4>Limitations</h4>
 <ul>
-<li>No video preview; the image goes from the camera over SDI/HDMI.</li>
-<li>UDP SET works only with WRITE:on in the camera; WRITE state is shown in the
-  device tooltip in the list.</li>
-<li>RM-IP500 panel table: read and CSV export; no write to the panel.</li>
-<li>Shots do not include exposure, white balance or colours.</li>
-<li>Cameras unreachable on the network do not restore their tabs at startup.</li>
+<li>No video preview. Use the camera SDI/HDMI output.</li>
+<li>UDP SET requires WRITE:on. The device tooltip shows the last reported state.</li>
+<li>The RM-IP500 panel table supports read and CSV export, not write-back.</li>
+<li>Shots store position only, not exposure, white balance or colour.</li>
+<li>Tabs for unreachable cameras are not restored at startup.</li>
 </ul>
 <p class="dim">Control: HTTP CGI (Digest), camera port 80. Discovery and network SET: UDP 52380.</p>
 """
@@ -165,6 +195,7 @@ class AboutDialog(QDialog):
 
 class ScanWorker(QThread):
     done = Signal(list)
+    error = Signal(str)
     prog = Signal(int, int)
     step = Signal(str)
 
@@ -180,8 +211,13 @@ class ScanWorker(QThread):
         self._stop = True
 
     def run(self):
+        try:
+            self._run()
+        except Exception as exc:
+            self.error.emit(str(exc)[:300])
+
+    def _run(self):
         if self.mode == "fast":
-            # phase 1/4: ARP candidates (quick hits first)
             try:
                 self.step.emit("Scan: ARP table...")
                 self.prog.emit(3, 100)
@@ -191,7 +227,6 @@ class ScanWorker(QThread):
             if self._stop:
                 self.done.emit([])
                 return
-            # phase 2/4: SSDP (multicast, ~2 s)
             try:
                 self.step.emit("Scan: SSDP/UPnP listening...")
                 self.prog.emit(8, 100)
@@ -202,24 +237,29 @@ class ScanWorker(QThread):
                 self.done.emit([])
                 return
             # known + ARP first (hits right away), defaults last
-            targets = list(dict.fromkeys(
-                list(self.known) + arp + ssdp + list(disc.LIKELY_DEFAULTS)))
-            # phase 3/4: TCP probing + parallel UDP ENQ:network (52380)
+            targets = list(dict.fromkeys(list(self.known) + arp + ssdp + list(disc.LIKELY_DEFAULTS)))
             self.step.emit(f"Scan: probing ({len(targets)} addresses)...")
             with ThreadPoolExecutor(max_workers=1) as uex:
                 fut_udp = self._start_udp(uex)
                 out = disc.probe_many(
-                    targets, creds_for=self.creds_for,
-                    progress=lambda d, t: (self.prog.emit(12 + 88 * d // max(1, t), 100),
-                                           self.step.emit(f"Scan: {d}/{t}...")))
+                    targets,
+                    creds_for=self.creds_for,
+                    progress=lambda d, t: (
+                        self.prog.emit(12 + 88 * d // max(1, t), 100),
+                        self.step.emit(f"Scan: {d}/{t}..."),
+                    ),
+                )
                 out = disc.merge_udp(out, self._udp_result(fut_udp))
         else:
             self.step.emit("Scan: UDP 52380...")
             with ThreadPoolExecutor(max_workers=1) as uex:
                 fut_udp = self._start_udp(uex)
-                out = disc.scan_subnet(self.cidr, creds_for=self.creds_for,
-                                       progress=lambda d, t: self.prog.emit(d, t),
-                                       stop_flag=lambda: self._stop)
+                out = disc.scan_subnet(
+                    self.cidr,
+                    creds_for=self.creds_for,
+                    progress=lambda d, t: self.prog.emit(d, t),
+                    stop_flag=lambda: self._stop,
+                )
                 out = disc.merge_udp(out, self._udp_result(fut_udp))
         self.done.emit(out)
 
@@ -232,8 +272,7 @@ class ScanWorker(QThread):
         except Exception:
             extra = []
         try:
-            return ex.submit(disc.udp_discover, 2.0, extra,
-                             lambda s: self.step.emit("Scan: " + str(s)))
+            return ex.submit(disc.udp_discover, 2.0, extra, lambda s: self.step.emit("Scan: " + str(s)))
         except Exception:
             return None
 
@@ -316,8 +355,8 @@ class MainWindow(QMainWindow):
         ar1.addWidget(self.btn_full)
         self.btn_bridge = QPushButton("Bridge unreachable")
         self.btn_bridge.setToolTip(
-            "Add temporary IPs on Ethernet for unreachable cameras (one UAC prompt).\n"
-            "Wi-Fi stays online.")
+            "Add temporary IPs on Ethernet for unreachable cameras (one UAC prompt).\nWi-Fi stays online."
+        )
         self.btn_bridge.clicked.connect(self.on_bridge)
         ar1.addWidget(self.btn_bridge)
         ar1.addStretch(1)
@@ -380,9 +419,9 @@ class MainWindow(QMainWindow):
         self.btn_demo.setStyleSheet(
             "QPushButton { color:#ffd9a0; background:#141619; border:1px solid #3a2c14;"
             " border-radius:5px; padding:5px 12px; }"
-            "QPushButton:hover { border-color:#ff9e2c; }")
-        self.btn_demo.setToolTip(
-            "Add a simulated camera to explore the interface without hardware.")
+            "QPushButton:hover { border-color:#ff9e2c; }"
+        )
+        self.btn_demo.setToolTip("Add a simulated camera to explore the interface without hardware.")
         self.btn_demo.clicked.connect(self.add_demo_camera)
         self.btn_demo.hide()
         self.cam_table.viewport().installEventFilter(self)
@@ -434,8 +473,8 @@ class MainWindow(QMainWindow):
         self.btn_add.setToolTip("Open the control tab for the selected camera.")
         self.btn_add.clicked.connect(self.add_ctrl_tab)
         row.addWidget(self.btn_add)
-        self.btn_web = QPushButton("Open in Edge")
-        self.btn_web.setToolTip("Open the camera web UI in Edge (app window).")
+        self.btn_web = QPushButton("Open in browser")
+        self.btn_web.setToolTip("Open the camera web UI in a browser.")
         self.btn_web.clicked.connect(self.open_external)
         row.addWidget(self.btn_web)
         self.log = QPlainTextEdit()
@@ -468,7 +507,7 @@ class MainWindow(QMainWindow):
                 # address on Ethernet - otherwise the route to its own subnet gets mixed up,
                 # and the Internet is supposed to stay on Wi-Fi.
                 with ThreadPoolExecutor(max_workers=8) as ex:
-                    reach = dict(zip(known, ex.map(nm.tcp_reachable, known)))
+                    reach = dict(zip(known, ex.map(nm.tcp_reachable, known), strict=True))
                 need = [ip for ip in known if not reach.get(ip)]
                 if need:
                     self.log_line(f"Start: restoring the bridge for {need} on '{iface}'...")
@@ -486,10 +525,11 @@ class MainWindow(QMainWindow):
 
     def log_line(self, t: str):
         from html import escape
+
         ts = datetime.datetime.now().strftime("%H:%M:%S")
         self.log.appendHtml(
-            f'<span style="color:#6f757c">[{ts}]</span> '
-            f'<span style="color:#d8dade">{escape(str(t))}</span>')
+            f'<span style="color:#8b9198">[{ts}]</span> <span style="color:#d8dade">{escape(str(t))}</span>'
+        )
 
     def update_net_label(self):
         try:
@@ -504,8 +544,12 @@ class MainWindow(QMainWindow):
         orph = nm.find_orphans()
         if orph:
             txt = "\n".join(f"{o['interface_alias']} {o['ip']}/{o['prefix']}" for o in orph)
-            if QMessageBox.question(self, "Leftover IPs from the previous session",
-                                    f"Temporary IPs found:\n{txt}\nRemove?") == QMessageBox.Yes:
+            if (
+                QMessageBox.question(
+                    self, "Leftover IPs from the previous session", f"Temporary IPs found:\n{txt}\nRemove?"
+                )
+                == QMessageBox.Yes
+            ):
                 msgs = nm.cleanup_all()
                 self.log_line("Cleanup: " + " | ".join(msgs))
                 self.update_net_label()
@@ -520,6 +564,7 @@ class MainWindow(QMainWindow):
                 wdg.shutdown()
         # cleanup in the background - closing never waits on UAC
         import threading
+
         threading.Thread(target=nm.cleanup_all, daemon=True).start()
         self.config.update({"scan_cidr": self.e_cidr.text()})
         cfg.save(self.config)
@@ -549,7 +594,7 @@ class MainWindow(QMainWindow):
         self._scan_gen = getattr(self, "_scan_gen", 0) + 1
         my_gen = self._scan_gen
         if self.worker is not None:
-            for sig in ("done", "prog", "step"):
+            for sig in ("done", "error", "prog", "step"):
                 try:
                     getattr(self.worker, sig).disconnect()
                 except Exception:
@@ -566,9 +611,11 @@ class MainWindow(QMainWindow):
         self.btn_fast.setEnabled(False)
         self.lbl.setText("Scanning...")
         self.log_line(f"Scan {mode} (cidr={self.e_cidr.text()}).")
-        self.worker = ScanWorker(mode, self.e_cidr.text().strip(), self.creds_for,
-                                 known=self.config.get("known_ips", []))
+        self.worker = ScanWorker(
+            mode, self.e_cidr.text().strip(), self.creds_for, known=self.config.get("known_ips", [])
+        )
         self.worker.done.connect(lambda found, g=my_gen: self.on_scan_done(found, g))
+        self.worker.error.connect(lambda msg, g=my_gen: self.on_scan_error(msg, g))
         self.worker.prog.connect(lambda d, t: (self.prog.setMaximum(t), self.prog.setValue(d)))
         self.worker.step.connect(self.lbl.setText)
         self.worker.start()
@@ -577,6 +624,16 @@ class MainWindow(QMainWindow):
         if self.worker and self.worker.isRunning():
             self.worker.stop()
             self.log_line("Scan stopped.")
+
+    def on_scan_error(self, message: str, gen=None):
+        if gen is not None and gen != getattr(self, "_scan_gen", gen):
+            return
+        self.prog.setVisible(False)
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.setVisible(False)
+        self.btn_fast.setEnabled(True)
+        self.lbl.setText("Scan failed. Check the log for details.")
+        self.log_line(f"Scan error: {message}")
 
     def on_scan_done(self, found, gen=None, announce=True):
         if gen is not None and gen != getattr(self, "_scan_gen", gen):
@@ -604,8 +661,10 @@ class MainWindow(QMainWindow):
             tip = c["ip"]
             u = c.get("udp") or {}
             if u:
-                tip += (f"\nUDP 52380: {u.get('model') or '?'} · MAC {u.get('mac') or '?'} · "
-                        f"FW {u.get('softversion') or '?'} · WRITE:{u.get('writable') or '?'}")
+                tip += (
+                    f"\nUDP 52380: {u.get('model') or '?'} · MAC {u.get('mac') or '?'} · "
+                    f"FW {u.get('softversion') or '?'} · WRITE:{u.get('writable') or '?'}"
+                )
             if c.get("note"):
                 tip += "\n" + str(c["note"])
             ip_item.setToolTip(tip)
@@ -634,9 +693,9 @@ class MainWindow(QMainWindow):
             self._restored = True
             self.restore_tabs()
         try:
-            known = list(dict.fromkeys(
-                list(self.config.get("known_ips", [])) +
-                [c["ip"] for c in found if c["ip"] != DEMO_IP]))[:20]
+            known = list(
+                dict.fromkeys(list(self.config.get("known_ips", [])) + [c["ip"] for c in found if c["ip"] != DEMO_IP])
+            )[:20]
             self.config["known_ips"] = known
             cfg.save(self.config)
         except Exception:
@@ -656,21 +715,22 @@ class MainWindow(QMainWindow):
         vp = self.cam_table.viewport()
         self.btn_demo.adjustSize()
         x = max(0, (vp.width() - self.btn_demo.width()) // 2)
-        y = min(max(0, vp.height() // 2 + 26),
-                max(0, vp.height() - self.btn_demo.height() - 8))
+        y = min(max(0, vp.height() // 2 + 26), max(0, vp.height() - self.btn_demo.height() - 8))
         self.btn_demo.move(x, y)
 
     def add_demo_camera(self):
         """Add the simulated camera (no network) and open its control tab."""
         if not any(c["ip"] == DEMO_IP for c in self.cams):
-            self.cams.append({
-                "ip": DEMO_IP,
-                "http": True,
-                "http_port": 0,
-                "visca_52381": False,
-                "model": "DEMO",
-                "note": "Simulated camera - no network. Safe to experiment.",
-            })
+            self.cams.append(
+                {
+                    "ip": DEMO_IP,
+                    "http": True,
+                    "http_port": 0,
+                    "visca_52381": False,
+                    "model": "DEMO",
+                    "note": "Simulated camera - no network. Safe to experiment.",
+                }
+            )
             self.log_line("Demo camera added (simulated, no hardware).")
         self.on_scan_done(self.cams, announce=False)
         self.add_ctrl_tab(DEMO_IP)
@@ -706,16 +766,16 @@ class MainWindow(QMainWindow):
                 cfg.save(self.config)
                 self.log_line(f"Login accepted for {ip}.")
                 return hit
-            error = ("Login or password is incorrect."
-                     if hit and hit.get("auth_failed") else "The camera did not respond.")
+            error = (
+                "Login or password is incorrect." if hit and hit.get("auth_failed") else "The camera did not respond."
+            )
             user = u
 
     def prompt_missing_creds(self):
         """Ask for credentials for cameras that rejected all default logins."""
         if self._cred_prompt_active:
             return
-        pending = [c["ip"] for c in self.cams
-                   if c.get("auth_failed") and c["ip"] not in self._cred_skipped]
+        pending = [c["ip"] for c in self.cams if c.get("auth_failed") and c["ip"] not in self._cred_skipped]
         if not pending:
             return
         self._cred_prompt_active = True
@@ -749,16 +809,17 @@ class MainWindow(QMainWindow):
         open_ips = set(self.ctrl_ips())
         for r, c in enumerate(self.cams):
             opened = c["ip"] in open_ips
-            item = QTableWidgetItem("open" if opened else "—")
+            item = QTableWidgetItem("open" if opened else "-")
             item.setTextAlignment(Qt.AlignCenter)
-            item.setForeground(QColor("#ffb14e") if opened else QColor("#6f757c"))
+            item.setForeground(QColor("#ffb14e") if opened else QColor("#8b9198"))
             self.cam_table.setItem(r, 4, item)
 
     def dev_menu(self, pos):
         from PySide6.QtWidgets import QMenu
+
         menu = QMenu(self)
         a1 = menu.addAction("Control")
-        a2 = menu.addAction("Open in Edge")
+        a2 = menu.addAction("Open in browser")
         a3 = menu.addAction("Check connection")
         a4 = menu.addAction("Forget IP")
         act = menu.exec(self.cam_table.viewport().mapToGlobal(pos))
@@ -786,11 +847,13 @@ class MainWindow(QMainWindow):
 
     def add_manual_ip(self):
         from PySide6.QtWidgets import QInputDialog
+
         ip, ok = QInputDialog.getText(self, "Add IP", "Camera address (e.g. 192.168.1.101):")
         if not ok or not ip.strip():
             return
         ip = ip.strip()
         import re as _re
+
         if not _re.match(r"^\d{1,3}(\.\d{1,3}){3}(:\d+)?$", ip):
             QMessageBox.warning(self, "Add IP", "This does not look like an IPv4 address.")
             return
@@ -817,8 +880,7 @@ class MainWindow(QMainWindow):
             self.on_scan_done(self.cams)
             self.log_line(f"Added {hit['ip']}.")
         else:
-            QMessageBox.warning(self, "Add IP",
-                                f"{ip}: no response or login was cancelled.")
+            QMessageBox.warning(self, "Add IP", f"{ip}: no response or login was cancelled.")
 
     def open_all_tabs(self):
         for c in self.cams:
@@ -829,12 +891,7 @@ class MainWindow(QMainWindow):
         self.add_ctrl_tab()
 
     def ctrl_ips(self):
-        out = []
-        for i in range(self.ctrl_tabs.count()):
-            wdg = self.ctrl_tabs.widget(i)
-            out.append((wdg.property("ip") if wdg is not None else None)
-                       or self.ctrl_tabs.tabText(i))
-        return out
+        return [tab_ip(self.ctrl_tabs.widget(i), self.ctrl_tabs.tabText(i)) for i in range(self.ctrl_tabs.count())]
 
     def _tab_label(self, ip: str) -> str:
         return next((str(c.get("model") or "") for c in self.cams if c["ip"] == ip), "") or ip
@@ -842,7 +899,7 @@ class MainWindow(QMainWindow):
     def _refresh_tab_labels(self):
         for i in range(self.ctrl_tabs.count()):
             wdg = self.ctrl_tabs.widget(i)
-            ip = (wdg.property("ip") if wdg is not None else None) or self.ctrl_tabs.tabText(i)
+            ip = tab_ip(wdg, self.ctrl_tabs.tabText(i))
             self.ctrl_tabs.setTabText(i, self._tab_label(ip))
 
     def add_ctrl_tab(self, ip=None):
@@ -875,10 +932,17 @@ class MainWindow(QMainWindow):
             cands = self.creds_for(ip)
             user, password = cands[0] if cands else ("admin", "admin123")
         demo_api = DemoCameraAPI(ip) if ip == DEMO_IP else None
-        tab = CameraTab(ip, user, password, http_port=port, log=self.log_line,
-                        frames=self.config.get("frames", {}).get(ip),
-                        save_frames=lambda: self.save_frames(ip),
-                        reachable=http or demo_api is not None, api=demo_api)
+        tab = CameraTab(
+            ip,
+            user,
+            password,
+            http_port=port,
+            log=self.log_line,
+            frames=self.config.get("frames", {}).get(ip),
+            save_frames=lambda: self.save_frames(ip),
+            reachable=http or demo_api is not None,
+            api=demo_api,
+        )
         tab.setProperty("ip", ip)
         idx = self.ctrl_tabs.addTab(tab, self._tab_label(ip))
         self.ctrl_tabs.setTabToolTip(idx, f"{ip} · CGI control")
@@ -890,8 +954,8 @@ class MainWindow(QMainWindow):
     def save_frames(self, ip):
         try:
             for i in range(self.ctrl_tabs.count()):
-                if self.ctrl_tabs.tabText(i) == ip:
-                    tab = self.ctrl_tabs.widget(i)
+                tab = self.ctrl_tabs.widget(i)
+                if tab_ip(tab) == ip:
                     fr = self.config.get("frames", {})
                     fr[ip] = tab.frames
                     self.config["frames"] = fr
@@ -940,10 +1004,16 @@ class MainWindow(QMainWindow):
                 if not user:
                     cands = self.creds_for(ip)
                     user, password = cands[0] if cands else ("admin", "admin123")
-                tab = CameraTab(ip, user, password, http_port=port, log=self.log_line,
-                                frames=self.config.get("frames", {}).get(ip),
-                                save_frames=lambda ip=ip: self.save_frames(ip),
-                                reachable=http)
+                tab = CameraTab(
+                    ip,
+                    user,
+                    password,
+                    http_port=port,
+                    log=self.log_line,
+                    frames=self.config.get("frames", {}).get(ip),
+                    save_frames=lambda ip=ip: self.save_frames(ip),
+                    reachable=http,
+                )
                 tab.setProperty("ip", ip)
                 idx = self.ctrl_tabs.addTab(tab, self._tab_label(ip))
                 self.ctrl_tabs.setTabToolTip(idx, f"{ip} · CGI control")
@@ -957,18 +1027,17 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No selection", "Select a camera in the table.")
             return
         if ip == DEMO_IP:
-            QMessageBox.information(self, "Demo camera",
-                                    "The demo camera has no web interface.")
+            QMessageBox.information(self, "Demo camera", "The demo camera has no web interface.")
             return
         port = next((c.get("http_port", 80) for c in self.cams if c["ip"] == ip), 80)
         how, msg = self.edge.open(ip, port)
         if how == "no-browser":
             import webbrowser
+
             webbrowser.open(f"http://{ip}:{port}/")
             self.log_line(msg + " Opened in the default browser.")
         else:
-            self.log_line(msg + (" (Edge will remember the password in the app profile.)"
-                                 if how == "opened" else ""))
+            self.log_line(msg + (" (Edge will remember the password in the app profile.)" if how == "opened" else ""))
 
     def on_diag(self):
         ip = self.selected_ip()
@@ -976,16 +1045,17 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No selection", "Select a camera.")
             return
         if ip == DEMO_IP:
-            QMessageBox.information(self, "Demo camera",
-                                    "Simulated camera - no network to test.")
+            QMessageBox.information(self, "Demo camera", "Simulated camera - no network to test.")
             return
         ok_p, ping_msg = diag.ping(ip)
         h = diag.tcp_open(ip, 80)
         h8 = diag.tcp_open(ip, 8080)
         v = diag.tcp_open(ip, 52381)
-        txt = (f"{ip}: ping={'OK' if ok_p else 'FAIL'} {ping_msg}\n"
-               f"80={'open' if h else 'closed'} 8080={'open' if h8 else 'closed'} "
-               f"VISCA 52381={'open' if v else 'closed'}")
+        txt = (
+            f"{ip}: ping={'OK' if ok_p else 'FAIL'} {ping_msg}\n"
+            f"80={'open' if h else 'closed'} 8080={'open' if h8 else 'closed'} "
+            f"VISCA 52381={'open' if v else 'closed'}"
+        )
         self.log_line(txt.replace("\n", " | "))
         QMessageBox.information(self, "Connection", txt)
 
@@ -998,12 +1068,14 @@ class MainWindow(QMainWindow):
         writable = None
         if u:
             writable = (u.get("writable") or "") == "on"
-        return {"mac": u.get("mac") or "",
-                "ip": c.get("ip", "") or "",
-                "mask": u.get("mask") or "255.255.255.0",
-                "gateway": u.get("gateway") or "",
-                "name": u.get("name") or net.get("CameraName") or "",
-                "writable": writable}
+        return {
+            "mac": u.get("mac") or "",
+            "ip": c.get("ip", "") or "",
+            "mask": u.get("mask") or "255.255.255.0",
+            "gateway": u.get("gateway") or "",
+            "name": u.get("name") or net.get("CameraName") or "",
+            "writable": writable,
+        }
 
     def open_udp_write(self):
         try:
@@ -1015,8 +1087,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No selection", "Select a camera in the table.")
             return
         if ip == DEMO_IP:
-            QMessageBox.information(self, "Demo camera",
-                                    "The demo camera has no network settings.")
+            QMessageBox.information(self, "Demo camera", "The demo camera has no network settings.")
             return
         dlg = WriteNetDialog(self, defaults=self._dev_defaults(ip), old_ip=ip)
         dlg.applied.connect(self.on_udp_write_applied)
@@ -1031,15 +1102,12 @@ class MainWindow(QMainWindow):
                 if new_ip not in known:
                     known.append(new_ip)
                 self.config["known_ips"] = known[:20]
-                self.config["open_tabs"] = [new_ip if t == old_ip else t
-                                            for t in self.config.get("open_tabs", [])]
+                self.config["open_tabs"] = [new_ip if t == old_ip else t for t in self.config.get("open_tabs", [])]
                 cfg.save(self.config)
             except Exception:
                 pass
         self.log_line(f"UDP SET: ACK confirmed, {old_ip} -> {new_ip}.")
-        QMessageBox.information(
-            self, "UDP SET",
-            f"Camera confirmed the change (ACK):\n\n  {old_ip}  ->  {new_ip}")
+        QMessageBox.information(self, "UDP SET", f"Camera confirmed the change (ACK):\n\n  {old_ip}  ->  {new_ip}")
         QTimer.singleShot(900, lambda: self.start_scan("fast"))
 
     def open_camtable(self):
@@ -1056,6 +1124,7 @@ class MainWindow(QMainWindow):
 
     def csv_menu(self):
         from PySide6.QtWidgets import QMenu
+
         menu = QMenu(self)
         a1 = menu.addAction("Export camera list (CSV)...")
         a2 = menu.addAction("Import camera list (CSV)...")
@@ -1068,12 +1137,14 @@ class MainWindow(QMainWindow):
     def _cam_csv_row(self, c: dict) -> dict:
         u = c.get("udp") or {}
         net = c.get("network") if isinstance(c.get("network"), dict) else {}
-        return {"name": u.get("name") or net.get("CameraName") or "",
-                "mac": u.get("mac") or net.get("MACAddress") or net.get("MAC") or "",
-                "ip": c.get("ip", ""),
-                "mask": u.get("mask") or "255.255.255.0",
-                "gateway": u.get("gateway") or "",
-                "version": u.get("softversion") or net.get("SoftVersion") or ""}
+        return {
+            "name": u.get("name") or net.get("CameraName") or "",
+            "mac": u.get("mac") or net.get("MACAddress") or net.get("MAC") or "",
+            "ip": c.get("ip", ""),
+            "mask": u.get("mask") or "255.255.255.0",
+            "gateway": u.get("gateway") or "",
+            "version": u.get("softversion") or net.get("SoftVersion") or "",
+        }
 
     def export_camera_csv(self):
         rows_out = [self._cam_csv_row(c) for c in self.cams if c["ip"] != DEMO_IP]
@@ -1081,8 +1152,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "CSV", "Device list is empty.")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export camera list (CSV)", "rmip_cameras.csv",
-            "CSV (*.csv);;All files (*)")
+            self, "Export camera list (CSV)", "rmip_cameras.csv", "CSV (*.csv);;All files (*)"
+        )
         if not path:
             return
         try:
@@ -1095,12 +1166,11 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "CSV", f"Saved {len(rows_out)} rows:\n{path}")
 
     def import_camera_csv(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Import camera list (CSV)", "", "CSV (*.csv);;All files (*)")
+        path, _ = QFileDialog.getOpenFileName(self, "Import camera list (CSV)", "", "CSV (*.csv);;All files (*)")
         if not path:
             return
         try:
-            with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+            with open(path, encoding="utf-8-sig", errors="replace") as f:
                 text = f.read()
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "CSV", f"Could not load: {e}")
@@ -1108,10 +1178,8 @@ class MainWindow(QMainWindow):
         parsed = sony_csv.parse_camera_csv(text)
         rows = parsed["rows"]
         if parsed["warnings"]:
-            extra = ("" if len(parsed["warnings"]) <= 12
-                     else f"\n... and {len(parsed['warnings']) - 12} more")
-            QMessageBox.warning(self, "CSV - warnings",
-                                "\n".join(parsed["warnings"][:12]) + extra)
+            extra = "" if len(parsed["warnings"]) <= 12 else f"\n... and {len(parsed['warnings']) - 12} more"
+            QMessageBox.warning(self, "CSV - warnings", "\n".join(parsed["warnings"][:12]) + extra)
         if not rows:
             QMessageBox.warning(self, "CSV", "File contains no camera rows.")
             return
@@ -1127,9 +1195,15 @@ class MainWindow(QMainWindow):
             if cam is not None:
                 cam.setdefault("csv", r)
                 continue
-            cam = {"ip": ip, "http": False, "http_port": 0, "visca_52381": False,
-                   "model": r.get("name") or "?", "csv": r,
-                   "note": f"from CSV: MAC {r.get('mac') or '?'} FW {r.get('version') or '?'}"}
+            cam = {
+                "ip": ip,
+                "http": False,
+                "http_port": 0,
+                "visca_52381": False,
+                "model": r.get("name") or "?",
+                "csv": r,
+                "note": f"from CSV: MAC {r.get('mac') or '?'} FW {r.get('version') or '?'}",
+            }
             self.cams.append(cam)
             by_ip[ip] = cam
             added += 1
@@ -1141,9 +1215,7 @@ class MainWindow(QMainWindow):
             pass
         self.on_scan_done(list(self.cams))
         self.log_line(f"CSV: loaded {len(rows)} rows ({added} new on the list).")
-        QMessageBox.information(
-            self, "CSV",
-            f"Loaded {len(rows)} cameras from the file. New on the list: {added}.")
+        QMessageBox.information(self, "CSV", f"Loaded {len(rows)} cameras from the file. New on the list: {added}.")
         self.start_scan("fast")
 
 
@@ -1154,13 +1226,19 @@ def app_icon():
     """
     base = getattr(sys, "_MEIPASS", None)
     if base:
-        # frozen: prefer the multi-size ICO (Windows native rendering)
-        candidates = [os.path.join(base, "assets", "icon.ico"),
-                      os.path.join(base, "assets", "icon.svg")]
+        # Frozen bundles prefer the platform-native icon.
+        candidates = [
+            os.path.join(base, "assets", "icon.icns"),
+            os.path.join(base, "assets", "icon.ico"),
+            os.path.join(base, "assets", "icon.svg"),
+        ]
     else:
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        candidates = [os.path.join(root, "assets", "icon.svg"),
-                      os.path.join(root, "assets", "icon.ico")]
+        candidates = [
+            os.path.join(root, "assets", "icon.icns"),
+            os.path.join(root, "assets", "icon.svg"),
+            os.path.join(root, "assets", "icon.ico"),
+        ]
     for path in candidates:
         if os.path.exists(path):
             icon = QIcon(path)
@@ -1181,6 +1259,7 @@ def set_windows_app_id():
     aumid = "wertos97.RMIPPlusPlus.App"
     try:
         import ctypes
+
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(aumid)
     except Exception:
         pass
@@ -1188,14 +1267,14 @@ def set_windows_app_id():
         import shutil
         import tempfile
         import winreg
+
         exe = sys.executable if getattr(sys, "frozen", False) else None
         if exe and os.path.exists(exe):
             # stable icon file (shell reads .ico more reliably than an exe in onefile)
             icon_uri = exe
             src = os.path.join(getattr(sys, "_MEIPASS", "") or "", "assets", "icon.ico")
             if os.path.exists(src):
-                dst_dir = os.path.join(
-                    os.environ.get("LOCALAPPDATA") or tempfile.gettempdir(), "RMIP++")
+                dst_dir = os.path.join(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir(), "RMIP++")
                 os.makedirs(dst_dir, exist_ok=True)
                 dst = os.path.join(dst_dir, "icon.ico")
                 try:
@@ -1203,17 +1282,14 @@ def set_windows_app_id():
                     icon_uri = dst
                 except Exception:
                     icon_uri = exe
-            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER,
-                                   "Software\\Classes\\AppUserModelId\\" + aumid)
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, "Software\\Classes\\AppUserModelId\\" + aumid)
             winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, "RM IP++")
             winreg.SetValueEx(key, "IconUri", 0, winreg.REG_SZ, icon_uri)
             winreg.CloseKey(key)
             # Start Menu shortcut carries the AUMID -> taskbar icon on Win11
             try:
-                lnk_dir = os.path.join(os.environ.get("APPDATA", ""),
-                                       "Microsoft", "Windows", "Start Menu", "Programs")
-                ensure_shortcut(os.path.join(lnk_dir, "RM IP++.lnk"),
-                                exe, icon_uri, aumid)
+                lnk_dir = os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs")
+                ensure_shortcut(os.path.join(lnk_dir, "RM IP++.lnk"), exe, icon_uri, aumid)
                 # tell the shell the registration changed (icon refresh)
                 ctypes.windll.shell32.SHChangeNotify(0x08000000, 0x0000, None, None)
             except Exception:
@@ -1224,6 +1300,7 @@ def set_windows_app_id():
 
 def run():
     import sys
+
     try:
         from .theme import apply_theme
     except ImportError:

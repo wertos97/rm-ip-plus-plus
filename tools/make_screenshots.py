@@ -5,8 +5,10 @@ Usage:  python tools/make_screenshots.py [output_dir]
 Isolates config in a temporary folder, so your real settings/credentials are
 not touched. Screenshots show sample cameras; the control data is simulated.
 """
+
 import atexit
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -19,12 +21,13 @@ os.environ.pop("QT_QPA_PLATFORM", None)
 import config_store as cfg  # noqa: E402
 
 _TMP = tempfile.mkdtemp(prefix="rmip_shots_")
+atexit.register(shutil.rmtree, _TMP, ignore_errors=True)
 cfg.APP_DIR = _TMP
 cfg.CONFIG_FILE = os.path.join(_TMP, "config.json")
 
-import net_manager as nm  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+import net_manager as nm  # noqa: E402
 import ui_control  # noqa: E402
 from demo_api import DemoCameraAPI  # noqa: E402
 from theme import apply_theme  # noqa: E402
@@ -36,6 +39,7 @@ os.makedirs(OUT, exist_ok=True)
 
 app = QApplication([])
 apply_theme(app)
+nm.STATE_FILE = os.path.join(_TMP, "temp_ips.json")
 w = MainWindow()
 w.start_scan = lambda mode: None  # no automatic scan: sample data only
 atexit.unregister(nm.cleanup_all)
@@ -61,12 +65,9 @@ def shot(widget, name):
     print("saved", path)
 
 
-# ---- sample device list (screenshots only) ----
 CAMS = [
-    {"ip": "192.168.1.101", "http": True, "http_port": 80,
-     "visca_52381": True, "model": "SRG-X400 (CAM2)"},
-    {"ip": "192.168.1.102", "http": True, "http_port": 80,
-     "visca_52381": True, "model": "BRC-AM7 (CAM1)"},
+    {"ip": "192.168.1.101", "http": True, "http_port": 80, "visca_52381": True, "model": "SRG-X400 (CAM2)"},
+    {"ip": "192.168.1.102", "http": True, "http_port": 80, "visca_52381": True, "model": "BRC-AM7 (CAM1)"},
 ]
 w.cams = [dict(c) for c in CAMS]
 w.on_scan_done(w.cams, announce=False)
@@ -76,26 +77,21 @@ w.log.clear()
 w.log_line("Scan fast (cidr=192.168.1.0/24).")
 w.log_line("Scan done: ['192.168.1.101', '192.168.1.102']")
 
-# ---- control tab backed by the demo API ----
 api = DemoCameraAPI("192.168.1.101")
-tab = ui_control.CameraTab("192.168.1.101", "admin", "admin123",
-                           log=w.log_line, api=api)
+tab = ui_control.CameraTab("192.168.1.101", "admin", "admin123", log=w.log_line, api=api)
 tab.setProperty("ip", "192.168.1.101")
 idx = w.ctrl_tabs.addTab(tab, "SRG-X400 (CAM2)")
 w.ctrl_tabs.setTabToolTip(idx, "192.168.1.101 · CGI control")
 w.ctrl_tabs.setCurrentWidget(tab)
 w.refresh_panel_col()
 
-# a nice-looking position
 api._pan = int(12.3 * 51.2)
 api._tilt = int(-4.0 * 51.2)
 api._zoom = int((3.2 - 1.0) / 19.0 * 0x4000)
 tab.refresh_all()
 pump(0.8)
 
-# presets with thumbnails
-PRESETS = {1: "Wide", 2: "MCU host", 3: "Two-shot", 4: "CU guest",
-           5: "Panel", 6: "Logo"}
+PRESETS = {1: "Wide", 2: "MCU host", 3: "Two-shot", 4: "CU guest", 5: "Panel", 6: "Logo"}
 for n, name in PRESETS.items():
     api.home()
     api.move("right" if n % 2 else "left", 4 + n)
@@ -105,7 +101,6 @@ for n, name in PRESETS.items():
 tab.preset_panel.refresh_names(PRESETS)
 pump(1.6)
 
-# shots (quick frames)
 SHOTS = ["Wide", "MCU host", "Two-shot", "CU guest"]
 for i, name in enumerate(SHOTS):
     api.home()
@@ -117,7 +112,6 @@ tab.frame_panel.reload()
 tab.refresh_quick()
 pump(0.4)
 
-# restore the nice position for the main/control shots
 api._pan = int(12.3 * 51.2)
 api._tilt = int(-4.0 * 51.2)
 api._zoom = int((3.2 - 1.0) / 19.0 * 0x4000)
@@ -134,7 +128,6 @@ tab.pages.setCurrentIndex(2)
 pump(0.4)
 shot(tab, "shots.png")
 
-# About
 about = AboutDialog(w)
 about.resize(880, 680)
 about.show()
@@ -142,16 +135,15 @@ pump(0.5)
 shot(about, "about.png")
 about.close()
 
-# login dialog
-login = CredentialsDialog(w, ip="192.168.1.110", user="admin",
-                          error="The default login was not accepted by this camera.")
+login = CredentialsDialog(
+    w, ip="192.168.1.110", user="admin", error="The default login was not accepted by this camera."
+)
 login.resize(540, 250)
 login.show()
 pump(0.4)
 shot(login, "login.png")
 login.close()
 
-# empty state with the demo button
 while w.ctrl_tabs.count():
     w.close_ctrl_tab(0)
 w.cams = []

@@ -13,37 +13,56 @@ How it works:
 
 Requirement: the L1 link must be UP (cable + camera power). Without link the bridge will not work.
 """
+
 from __future__ import annotations
 
+import os
 import re
 import socket
 import struct
 import subprocess
 import urllib.parse
+
+try:
+    from .net_manager import list_ipv4_addresses
+except ImportError:
+    from net_manager import list_ipv4_addresses
+
 SSDP_ADDR = "239.255.255.250"
 SSDP_PORT = 1900
 
 
 def _run(cmd: list[str], timeout: int = 15):
-    return subprocess.run(cmd, capture_output=True, text=True, shell=False, timeout=timeout,
-                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        shell=False,
+        timeout=timeout,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
 # only typical camera/broadcast ones - we do not scan the whole internet
 COMMON_CAMERA_SUBNETS = [
-    "192.168.0", "192.168.1", "192.168.10", "192.168.100",
-    "10.0.0", "10.1.1", "172.16.0",
+    "192.168.0",
+    "192.168.1",
+    "192.168.10",
+    "192.168.100",
+    "10.0.0",
+    "10.1.1",
+    "172.16.0",
 ]
 LIKELY_HOSTS = [".100", ".101", ".1", ".10", ".11", ".120", ".50"]
 
 
 def ssdp_search(timeout: float = 4.0) -> list[dict]:
     """Sends M-SEARCH, collects replies. Returns [{ip, location, st, usn}]."""
-    msg = ("\r\n".join([
-        "M-SEARCH * HTTP/1.1",
-        f"HOST: {SSDP_ADDR}:{SSDP_PORT}",
-        'MAN: "ns:01"',
-        "MX: 2",
-        "ST: ssdp:all",
-        "", ""])).encode()
+    msg = (
+        "\r\n".join(
+            ["M-SEARCH * HTTP/1.1", f"HOST: {SSDP_ADDR}:{SSDP_PORT}", 'MAN: "ns:01"', "MX: 2", "ST: ssdp:all", "", ""]
+        )
+    ).encode()
     found: list[dict] = []
     seen: set[str] = set()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -65,11 +84,12 @@ def ssdp_search(timeout: float = 4.0) -> list[dict]:
         except Exception:
             pass
         import time
+
         end = time.time() + timeout
         while time.time() < end:
             try:
                 data, addr = sock.recvfrom(65535)
-            except socket.timeout:
+            except TimeoutError:
                 break
             except Exception:
                 break
@@ -103,40 +123,48 @@ def ssdp_search(timeout: float = 4.0) -> list[dict]:
 
 
 def arp_candidates(interface_alias: str | None = None) -> list[dict]:
-    """Candidates from the ARP table (parsing `arp -a` - it also shows the INTERFACE).
-
-    Works for foreign subnets: an entry 192.168.1.101 under the Wi-Fi interface means
-    the camera is within corporate network range without any changes on the PC.
-    """
+    """Read neighbor candidates from the Windows or macOS ARP table."""
     out: list[dict] = []
     try:
-        p = _run(["arp", "-a"], timeout=15)
+        command = ["arp", "-a"] if os.name == "nt" else ["arp", "-an"]
+        result = _run(command, timeout=15)
         cur_iface = ""
-        for line in (p.stdout or "").splitlines():
-            m = re.match(r"\s*Interface:\s+(\S+)\s+---", line)
-            if m:
-                cur_iface = m.group(1)
-                continue
-            m = re.match(r"\s*(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F-]{17})\s+(\w+)", line)
-            if not m:
-                continue
-            ip, mac, dtype = m.group(1), m.group(2), m.group(3)
+        for line in (result.stdout or "").splitlines():
+            if os.name == "nt":
+                header = re.match(r"\s*Interface:\s+(\S+)\s+---", line)
+                if header:
+                    cur_iface = header.group(1)
+                    continue
+                match = re.match(r"\s*(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F-]{17})\s+(\w+)", line)
+                if not match:
+                    continue
+                ip, mac, state = match.groups()
+            else:
+                match = re.match(
+                    r"\s*\??\s*\((\d+\.\d+\.\d+\.\d+)\)\s+at\s+([0-9a-fA-F:]{17})\s+on\s+(\S+)",
+                    line,
+                )
+                if not match:
+                    continue
+                ip, mac, cur_iface = match.groups()
+                state = "reachable"
             if ip.endswith(".255") or ip.startswith(("224.", "239.", "255.", "0.")):
                 continue
-            if mac.lower().startswith("01-00-5e") or mac.lower() == "ff-ff-ff-ff-ff-ff":
+            normalized_mac = mac.lower().replace(":", "-")
+            if normalized_mac.startswith("01-00-5e") or normalized_mac == "ff-ff-ff-ff-ff-ff":
                 continue
             if interface_alias and cur_iface and interface_alias not in cur_iface and cur_iface not in interface_alias:
-                # match by alias OR address (arp reports the interface address)
                 alias_match = False
                 try:
-                    for a in list_ipv4_addresses():
-                        if a["alias"] == interface_alias and a["ip"] == cur_iface:
+                    for address in list_ipv4_addresses():
+                        if address["alias"] == interface_alias and address["ip"] == cur_iface:
                             alias_match = True
+                            break
                 except Exception:
                     pass
                 if not alias_match:
                     continue
-            out.append({"ip": ip, "mac": mac, "state": dtype, "via": "arp", "iface": cur_iface})
+            out.append({"ip": ip, "mac": mac, "state": state, "via": "arp", "iface": cur_iface})
     except Exception:
         pass
     return out

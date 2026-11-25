@@ -1,4 +1,5 @@
-"""Alpha 7 style: black, amber, new font, white icons."""
+"""Dark amber theme for the desktop UI."""
+
 from __future__ import annotations
 
 from PySide6.QtGui import QFont, QFontDatabase
@@ -9,6 +10,7 @@ BG = "#0b0c0e"
 PANEL = "#141619"
 FIELD = "#1d2024"
 LINE = "#2b2f35"
+CONTROL_LINE = "#6f757c"
 TEXT = "#f2f2f2"
 DIM = "#9aa0a6"
 
@@ -21,21 +23,27 @@ QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px;
   color: {ACCENT}; letter-spacing: 2px; }}
 QLabel {{ background: transparent; }}
 QLabel:disabled {{ color: #5a5e63; }}
-QPushButton, QToolButton {{ background: {FIELD}; border: 1px solid {LINE};
-  border-radius: 5px; padding: 7px 10px; color: {TEXT}; outline: none; }}
+QPushButton, QToolButton {{ background: {FIELD}; border: 1px solid {CONTROL_LINE};
+  border-radius: 5px; padding: 7px 10px; color: {TEXT}; outline: none; cursor: pointer; }}
 QPushButton:hover, QToolButton:hover {{ border-color: {ACCENT}; }}
 QPushButton:pressed, QToolButton:pressed {{ background: #2a2e33; }}
 QPushButton:checked {{ background: #3a2c14; border-color: {ACCENT}; color: {ACCENT}; }}
-QPushButton:disabled, QToolButton:disabled {{ color: #5a5e63; }}
-QComboBox {{ background: {FIELD}; border: 1px solid {LINE}; border-radius: 4px;
-  padding: 6px; }}
+QPushButton:disabled, QToolButton:disabled {{ color: #5a5e63; cursor: not-allowed; }}
+QPushButton:focus, QToolButton:focus, QLineEdit:focus, QComboBox:focus,
+QSpinBox:focus, QDoubleSpinBox:focus, QTabBar::tab:focus, QTableWidget:focus,
+QPlainTextEdit:focus {{ border: 2px solid {ACCENT}; }}
+QComboBox {{ background: {FIELD}; border: 1px solid {CONTROL_LINE}; border-radius: 4px;
+  padding: 6px; cursor: pointer; }}
+QComboBox:disabled {{ color: #5a5e63; cursor: not-allowed; }}
 QComboBox QAbstractItemView {{ background: {FIELD}; selection-background-color: #3a2c14;
-  border: 1px solid {LINE}; padding: 4px; outline: none; }}
+  border: 1px solid {CONTROL_LINE}; padding: 4px; outline: none; }}
 QComboBox QAbstractItemView::item {{ padding: 6px 10px; border-radius: 4px; }}
 QComboBox QAbstractItemView::item:selected {{ background: #3a2c14; color: #ffd9a0; }}
-QSpinBox, QLineEdit {{ background: {FIELD}; border: 1px solid {LINE};
+QSpinBox, QLineEdit {{ background: {FIELD}; border: 1px solid {CONTROL_LINE};
   border-radius: 4px; padding: 6px; selection-background-color: {ACCENT_DIM}; outline: none; }}
-QSlider {{ outline: none; }}
+QSlider {{ outline: none; cursor: pointer; }}
+QSlider:focus::handle:horizontal, QSlider:focus::handle:vertical {{
+  border: 2px solid {TEXT}; }}
 QSlider::groove:horizontal {{ height: 3px; background: {LINE}; }}
 QSlider::handle:horizontal {{ width: 15px; height: 15px; background: {ACCENT};
   border-radius: 7px; margin: -6px 0; }}
@@ -55,12 +63,12 @@ QRadioButton::indicator:checked {{ border: none;
     stop:0.82 {ACCENT}, stop:0.9 {ACCENT}, stop:0.94 rgba(0,0,0,0),
     stop:1 rgba(0,0,0,0)); }}
 QTabWidget::pane {{ border: 1px solid {LINE}; border-radius: 4px; }}
-QTabBar::tab {{ background: {PANEL}; border: 1px solid {LINE}; padding: 7px 16px;
+QTabBar::tab {{ background: {PANEL}; border: 1px solid {CONTROL_LINE}; padding: 7px 16px;
   border-top-left-radius: 5px; border-top-right-radius: 5px; outline: none; }}
 QTabBar::tab:hover:!selected {{ color: {ACCENT}; border-color: {ACCENT_DIM}; }}
 QTabBar::tab:selected {{ color: {ACCENT}; border-color: {ACCENT}; }}
 QTableWidget {{ background: {PANEL}; gridline-color: {LINE}; alternate-background-color: #101215;
-  border: 1px solid {LINE}; border-radius: 4px; outline: none; }}
+  border: 1px solid {CONTROL_LINE}; border-radius: 4px; outline: none; }}
 QTableCornerButton::section {{ background: {FIELD}; border: none; }}
 QTableWidget::item:selected {{ background-color: #41331b; color: #ffd9a0; }}
 QTableWidget::item:selected:!active {{ background-color: #2f2717; color: #ffd9a0; }}

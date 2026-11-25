@@ -1,4 +1,5 @@
 """Camera discovery: fast path for a direct cable + subnet sweep with progress."""
+
 from __future__ import annotations
 
 import ipaddress
@@ -10,8 +11,7 @@ try:
 except ImportError:
     from sony_client import SonyCamera  # noqa: E402
 
-LIKELY_DEFAULTS = ["192.168.0.100", "192.168.0.101", "192.168.0.1",
-                   "192.168.0.10", "192.168.0.11", "192.168.0.120"]
+LIKELY_DEFAULTS = ["192.168.0.100", "192.168.0.101", "192.168.0.1", "192.168.0.10", "192.168.0.11", "192.168.0.120"]
 VISCA_TCP_PORT = 52381
 
 
@@ -32,8 +32,7 @@ def udp_discover(timeout: float = 2.0, extra_broadcasts=(), log=None) -> list[di
         from . import sony_udp
     except ImportError:
         import sony_udp  # noqa: E402
-    return sony_udp.discover(timeout=timeout, extra_broadcasts=extra_broadcasts,
-                             log=log)
+    return sony_udp.discover(timeout=timeout, extra_broadcasts=extra_broadcasts, log=log)
 
 
 def merge_udp(found: list[dict], udp_hits: list[dict]) -> list[dict]:
@@ -58,19 +57,21 @@ def merge_udp(found: list[dict], udp_hits: list[dict]) -> list[dict]:
             if cam.get("model", "?") in ("?", "") and label:
                 cam["model"] = label
             continue
-        cam = {"ip": ip, "http": False, "http_port": 0, "visca_52381": False,
-               "model": label or "?", "udp": u}
+        cam = {"ip": ip, "http": False, "http_port": 0, "visca_52381": False, "model": label or "?", "udp": u}
         mac = u.get("mac") or ""
-        cam["note"] = (f"UDP 52380: MAC {mac} - no HTTP confirmation "
-                       "(check subnet/route)") if mac else \
-                      "UDP 52380 - no HTTP confirmation (check subnet/route)"
+        cam["note"] = (
+            (f"UDP 52380: MAC {mac} - no HTTP confirmation (check subnet/route)")
+            if mac
+            else "UDP 52380 - no HTTP confirmation (check subnet/route)"
+        )
         out.append(cam)
         by_ip[ip] = cam
     return sorted(out, key=lambda d: d["ip"])
 
 
-def probe_ip(ip: str, user: str = "admin", password: str = "admin",
-             cgi_timeout: float = 2.5, creds_list=None) -> dict | None:
+def probe_ip(
+    ip: str, user: str = "admin", password: str = "admin", cgi_timeout: float = 2.5, creds_list=None
+) -> dict | None:
     """Fast probe: short parallel TCP, CGI with a shorter timeout (scan does not hang).
 
     creds_list: optional list of (user, password) to try in order (per-camera
@@ -84,14 +85,13 @@ def probe_ip(ip: str, user: str = "admin", password: str = "admin",
     visca = tcp_open(ip, VISCA_TCP_PORT, 0.5)
     if not http_port and not visca:
         return None
-    info: dict = {"ip": ip, "http": bool(http_port), "http_port": http_port,
-                  "visca_52381": visca, "model": "?"}
+    info: dict = {"ip": ip, "http": bool(http_port), "http_port": http_port, "visca_52381": visca, "model": "?"}
     if http_port:
         attempts = list(creds_list) if creds_list else [(user, password)]
         net: dict | str | None = None
         used: tuple[str, str] | None = None
         auth_failed = False
-        for (u, p) in attempts:
+        for u, p in attempts:
             cam = SonyCamera(ip, u, p, http_port=http_port)
             ok, data = cam.get_network(timeout=cgi_timeout)
             if ok and isinstance(data, dict):
@@ -119,14 +119,14 @@ def probe_ip(ip: str, user: str = "admin", password: str = "admin",
             ident = ""
             try:
                 import re
+
                 import requests
-                r = requests.get(f"http://{ip}:{http_port}/", timeout=cgi_timeout,
-                                 allow_redirects=True)
+
+                r = requests.get(f"http://{ip}:{http_port}/", timeout=cgi_timeout, allow_redirects=True)
                 m = re.search(r"<title>(.*?)</title>", r.text[:8000], re.I | re.S)
                 title = m.group(1).strip()[:60] if m else ""
                 hdrs = " ".join(f"{k} {v}" for k, v in r.headers.items())
-                if re.search(r"sony|srg|snc|ipela|camera|kamera|ptz|visca",
-                             f"{title} {hdrs}", re.I):
+                if re.search(r"sony|srg|snc|ipela|camera|kamera|ptz|visca", f"{title} {hdrs}", re.I):
                     ident = title or "camera (HTTP)"
             except Exception:
                 pass
@@ -148,17 +148,25 @@ def probe_ip(ip: str, user: str = "admin", password: str = "admin",
     return info
 
 
-def probe_many(ips: list[str], user="admin", password="admin",
-               max_workers: int = 16, cgi_timeout: float = 2.5,
-               progress=None, creds_for=None) -> list[dict]:
+def probe_many(
+    ips: list[str],
+    user="admin",
+    password="admin",
+    max_workers: int = 16,
+    cgi_timeout: float = 2.5,
+    progress=None,
+    creds_for=None,
+) -> list[dict]:
     """Parallel probe of an IP list - done in seconds, does not hang the UI."""
     targets = list(dict.fromkeys(ips))
     total = len(targets)
     found = []
     done_n = [0]
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs = {ex.submit(probe_ip, ip, user, password, cgi_timeout,
-                          creds_for(ip) if creds_for else None): ip for ip in targets}
+        futs = {
+            ex.submit(probe_ip, ip, user, password, cgi_timeout, creds_for(ip) if creds_for else None): ip
+            for ip in targets
+        }
         for f in as_completed(futs):
             try:
                 hit = f.result()
@@ -178,8 +186,10 @@ def probe_many(ips: list[str], user="admin", password="admin",
 def scan_defaults(user="admin", password="admin", creds_for=None) -> list[dict]:
     found = []
     with ThreadPoolExecutor(max_workers=8) as ex:
-        futs = {ex.submit(probe_ip, ip, user, password, 2.5,
-                          creds_for(ip) if creds_for else None): ip for ip in LIKELY_DEFAULTS}
+        futs = {
+            ex.submit(probe_ip, ip, user, password, 2.5, creds_for(ip) if creds_for else None): ip
+            for ip in LIKELY_DEFAULTS
+        }
         for f in as_completed(futs):
             hit = f.result()
             if hit:
@@ -187,8 +197,9 @@ def scan_defaults(user="admin", password="admin", creds_for=None) -> list[dict]:
     return sorted(found, key=lambda d: d["ip"])
 
 
-def scan_subnet(cidr: str, user="admin", password="admin", max_workers: int = 64,
-                progress=None, stop_flag=None, creds_for=None) -> list[dict]:
+def scan_subnet(
+    cidr: str, user="admin", password="admin", max_workers: int = 64, progress=None, stop_flag=None, creds_for=None
+) -> list[dict]:
     """Scan with progress (progress(done,total)) and cancel (stop_flag()->bool)."""
     net = ipaddress.ip_network(cidr, strict=False)
     ips = [str(h) for h in net.hosts()][:512]
@@ -196,8 +207,7 @@ def scan_subnet(cidr: str, user="admin", password="admin", max_workers: int = 64
     found: list[dict] = []
     done = 0
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs = {ex.submit(probe_ip, ip, user, password, 2.5,
-                          creds_for(ip) if creds_for else None): ip for ip in ips}
+        futs = {ex.submit(probe_ip, ip, user, password, 2.5, creds_for(ip) if creds_for else None): ip for ip in ips}
         for f in as_completed(futs):
             if stop_flag and stop_flag():
                 for ff in futs:

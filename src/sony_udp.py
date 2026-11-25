@@ -21,8 +21,10 @@ Advantage over a TCP scan: broadcast reaches the whole L2 segment, so a camera
 with an address from a different subnet than the computer also replies (this is
 exactly how "Auto IP Setup" in the Sony tool repairs a wrong IP).
 """
+
 from __future__ import annotations
 
+import os
 import re
 import select
 import socket
@@ -31,12 +33,11 @@ import time
 
 SONY_UDP_PORT = 52380
 ENQ_NETWORK = b"\x02ENQ:network\xff\x03"
-CAMTABLE_PAGES = 4              # ENQ:camtable1..4
+CAMTABLE_PAGES = 4  # ENQ:camtable1..4
 CAMTABLE_ENTRIES_PER_PAGE = 28  # 4 strony x 28 = 112 slotow (RM-IP500)
 CAMTABLE_SLOTS = CAMTABLE_PAGES * CAMTABLE_ENTRIES_PER_PAGE
 
-_REPLY_KEYS = ("MODEL", "SOFTVERSION", "MAC", "IPADR", "MASK", "GATEWAY", "NAME",
-               "WRITE")
+_REPLY_KEYS = ("MODEL", "SOFTVERSION", "MAC", "IPADR", "MASK", "GATEWAY", "NAME", "WRITE")
 
 
 def build_request() -> bytes:
@@ -73,19 +74,30 @@ def parse_reply(data: bytes, src_ip: str = "") -> dict | None:
         "name": fields["NAME"],
         "mask": fields["MASK"],
         "gateway": fields["GATEWAY"],
-        "writable": fields["WRITE"].lower(),   # "on"/"off"/""
+        "writable": fields["WRITE"].lower(),  # "on"/"off"/""
     }
 
 
 def local_ipv4s() -> list[str]:
-    """Local IPv4 addresses: ipconfig + default-route egress address + hostname."""
+    """Local IPv4 addresses from the OS, default route and hostname."""
     ips: list[str] = []
     try:
+        if os.name == "nt":
+            command = ["ipconfig"]
+        else:
+            command = ["ifconfig", "-a"]
         out = subprocess.run(
-            ["ipconfig"], capture_output=True, text=True, timeout=6,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        for m in re.finditer(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", out.stdout or ""):
-            ips.append(m.group(1))
+            command,
+            capture_output=True,
+            text=True,
+            timeout=6,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if os.name == "nt":
+            matches = re.finditer(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", out.stdout or "")
+        else:
+            matches = re.finditer(r"\binet\s+(\d{1,3}(?:\.\d{1,3}){3})\b", out.stdout or "")
+        ips.extend(match.group(1) for match in matches)
     except Exception:
         pass
     try:
@@ -144,7 +156,7 @@ def _open_socks(ips, log=None):
 def _broadcast_targets(ips, extra_broadcasts=()):
     targets = ["255.255.255.255"]
     for ip in ips:
-        b = ip.rsplit(".", 1)[0] + ".255"          # /24 - this is how the app bridge works
+        b = ip.rsplit(".", 1)[0] + ".255"  # /24 - this is how the app bridge works
         if b not in targets:
             targets.append(b)
     for b in extra_broadcasts:
@@ -212,8 +224,7 @@ def _listen(socks, timeout, handler, dedup=None):
     return out
 
 
-def _exchange(payloads, timeout, handler, dedup=None, retries=3,
-              extra_broadcasts=(), log=None, local_ips=None):
+def _exchange(payloads, timeout, handler, dedup=None, retries=3, extra_broadcasts=(), log=None, local_ips=None):
     """Shared flow: sockets -> broadcast rounds -> listen with dedup."""
     ips = list(local_ips) if local_ips is not None else local_ipv4s()
     socks = _open_socks(ips, log)
@@ -231,8 +242,7 @@ def _exchange(payloads, timeout, handler, dedup=None, retries=3,
                 pass
 
 
-def discover(timeout: float = 2.0, retries: int = 3, extra_broadcasts=(),
-             log=None, local_ips=None) -> list[dict]:
+def discover(timeout: float = 2.0, retries: int = 3, extra_broadcasts=(), log=None, local_ips=None) -> list[dict]:
     """Broadcasts ENQ:network (52380) and collects camera replies.
 
     One socket per local IPv4 address (+ default) - thanks to this the
@@ -240,11 +250,15 @@ def discover(timeout: float = 2.0, retries: int = 3, extra_broadcasts=(),
     Returns a list of dicts from parse_reply (sorted by IP).
     """
     hits = _exchange(
-        [build_request()], timeout,
+        [build_request()],
+        timeout,
         lambda data, addr: parse_reply(data, addr[0]),
         dedup=lambda c: c["mac_norm"] or c["ip"],
-        retries=retries, extra_broadcasts=extra_broadcasts,
-        log=log, local_ips=local_ips)
+        retries=retries,
+        extra_broadcasts=extra_broadcasts,
+        log=log,
+        local_ips=local_ips,
+    )
     if log:
         for cam in hits:
             try:
@@ -254,17 +268,15 @@ def discover(timeout: float = 2.0, retries: int = 3, extra_broadcasts=(),
     return sorted(hits, key=lambda c: c["ip"])
 
 
-# ---------------------------------------------------------------------------
-# camera network SET (equivalent of "Auto IP Setup" / WRITE in RM-IP Setup Tool)
-# ---------------------------------------------------------------------------
+# Camera network SET, equivalent to Auto IP Setup in RM-IP Setup Tool.
+
 
 def normalize_mac(mac: str) -> str:
     """'00:11:22:33:44:55' / '001122334455' -> '00-11-22-33-44-55' (format Sony)."""
     hexs = re.sub(r"[^0-9A-Fa-f]", "", mac or "")
     if len(hexs) != 12:
-        raise ValueError(
-            f"MAC must have 12 hex digits, e.g. 00-11-22-33-44-55 (got {mac!r})")
-    return "-".join(hexs[i:i + 2] for i in range(0, 12, 2)).upper()
+        raise ValueError(f"MAC must have 12 hex digits, e.g. 00-11-22-33-44-55 (got {mac!r})")
+    return "-".join(hexs[i : i + 2] for i in range(0, 12, 2)).upper()
 
 
 def is_ipv4(value: str) -> bool:
@@ -300,9 +312,19 @@ def build_set_network(mac: str, ip: str, mask: str, gateway: str, name: str) -> 
         raise ValueError("name cannot be empty")
     if len(name) > 16 or any(not (0x20 <= ord(ch) <= 0x7E) for ch in name):
         raise ValueError("name: max 16 printable ASCII characters, no diacritics")
-    return (b"\x02MAC:" + mac.encode("ascii") + b"\xffIPADR:" + ip.encode("ascii") +
-            b"\xffMASK:" + mask.encode("ascii") + b"\xffGATEWAY:" +
-            gateway.encode("ascii") + b"\xffNAME:" + name.encode("ascii") + b"\xff\x03")
+    return (
+        b"\x02MAC:"
+        + mac.encode("ascii")
+        + b"\xffIPADR:"
+        + ip.encode("ascii")
+        + b"\xffMASK:"
+        + mask.encode("ascii")
+        + b"\xffGATEWAY:"
+        + gateway.encode("ascii")
+        + b"\xffNAME:"
+        + name.encode("ascii")
+        + b"\xff\x03"
+    )
 
 
 def build_camtable_query(page: int = 1) -> bytes:
@@ -325,10 +347,10 @@ def parse_ack_nak(data: bytes) -> dict | None:
     m = re.search(r'"([0-9A-Fa-f]{2}(?:-[0-9A-Fa-f]{2}){5})"', text)
     mac = m.group(1).upper() if m else ""
     if m:
-        tail = text[m.end():]
+        tail = text[m.end() :]
     else:
         i = text.find(kind + ":")
-        tail = text[i + len(kind) + 1:] if i >= 0 else ""
+        tail = text[i + len(kind) + 1 :] if i >= 0 else ""
     tail = tail.strip("\x00 \t\r\n\xff\x03")
     return {"kind": kind, "mac": mac, "tail": tail, "raw": data}
 
@@ -367,13 +389,21 @@ def parse_camtable_reply(data: bytes, src_ip: str = "") -> dict | None:
             entries.append(e)
     if not entries and not panel_mac:
         return None
-    return {"page": page, "panel_mac": panel_mac, "src_ip": src_ip,
-            "entries": entries, "raw": data}
+    return {"page": page, "panel_mac": panel_mac, "src_ip": src_ip, "entries": entries, "raw": data}
 
 
-def set_camera_network(mac: str, ip: str, mask: str, gateway: str = "", name: str = "",
-                       timeout: float = 4.0, retries: int = 3,
-                       extra_broadcasts=(), log=None, local_ips=None) -> dict:
+def set_camera_network(
+    mac: str,
+    ip: str,
+    mask: str,
+    gateway: str = "",
+    name: str = "",
+    timeout: float = 4.0,
+    retries: int = 3,
+    extra_broadcasts=(),
+    log=None,
+    local_ips=None,
+) -> dict:
     """Sends the network SET (broadcast) and waits for ACK/NAK from the given MAC.
 
     NOTE: the camera changes its address right after the ACK - if the new IP is in
@@ -390,29 +420,41 @@ def set_camera_network(mac: str, ip: str, mask: str, gateway: str = "", name: st
         info["src_ip"] = addr[0]
         return info
 
-    replies = _exchange([payload], timeout, _on_packet,
-                        dedup=lambda r: (r["kind"], r["mac"], r["src_ip"]),
-                        retries=retries, extra_broadcasts=extra_broadcasts,
-                        log=log, local_ips=local_ips)
+    replies = _exchange(
+        [payload],
+        timeout,
+        _on_packet,
+        dedup=lambda r: (r["kind"], r["mac"], r["src_ip"]),
+        retries=retries,
+        extra_broadcasts=extra_broadcasts,
+        log=log,
+        local_ips=local_ips,
+    )
     acks = [r for r in replies if r["kind"] == "ACK"]
     naks = [r for r in replies if r["kind"] == "NAK"]
-    base = {"ip": ip, "mask": mask, "gateway": gateway, "name": name,
-            "target_mac": target_mac, "replies": replies}
+    base = {"ip": ip, "mask": mask, "gateway": gateway, "name": name, "target_mac": target_mac, "replies": replies}
     pick_ack = next((r for r in acks if r["mac"] and r["mac"] == target_mac), None)
     other_ack = next((r for r in acks if not r["mac"]), None)
     if pick_ack or other_ack:
         r = pick_ack or other_ack
-        return {**base, "ok": True, "kind": "ACK", "reply_mac": r["mac"],
-                "src_ip": r["src_ip"], "raw": r["raw"]}
+        return {**base, "ok": True, "kind": "ACK", "reply_mac": r["mac"], "src_ip": r["src_ip"], "raw": r["raw"]}
     if naks:
         r = naks[0]
-        return {**base, "ok": False, "kind": "NAK", "reply_mac": r["mac"],
-                "src_ip": r["src_ip"], "tail": r["tail"], "raw": r["raw"]}
+        return {
+            **base,
+            "ok": False,
+            "kind": "NAK",
+            "reply_mac": r["mac"],
+            "src_ip": r["src_ip"],
+            "tail": r["tail"],
+            "raw": r["raw"],
+        }
     return {**base, "ok": False, "kind": "timeout"}
 
 
-def query_camtable(pages=(1, 2, 3, 4), timeout: float = 5.0, retries: int = 3,
-                   extra_broadcasts=(), log=None, local_ips=None) -> dict:
+def query_camtable(
+    pages=(1, 2, 3, 4), timeout: float = 5.0, retries: int = 3, extra_broadcasts=(), log=None, local_ips=None
+) -> dict:
     """Asks the RM-IP panel for its camera table (4 pages of 28 slots).
 
     Returns {"pages": [parse_camtable_reply...], "misc": [ACK/NAK...], "raw": [bytes...]}
@@ -430,11 +472,15 @@ def query_camtable(pages=(1, 2, 3, 4), timeout: float = 5.0, retries: int = 3,
         return None
 
     items = _exchange(
-        payloads, timeout, _on_packet,
-        dedup=lambda it: (it[0], it[1].get("src_ip", ""),
-                          it[1].get("page", ""), it[1].get("kind", "")),
-        retries=retries, extra_broadcasts=extra_broadcasts,
-        log=log, local_ips=local_ips)
+        payloads,
+        timeout,
+        _on_packet,
+        dedup=lambda it: (it[0], it[1].get("src_ip", ""), it[1].get("page", ""), it[1].get("kind", "")),
+        retries=retries,
+        extra_broadcasts=extra_broadcasts,
+        log=log,
+        local_ips=local_ips,
+    )
     out: dict = {"pages": [], "misc": [], "raw": []}
     for tag, info in items:
         if tag == "page":
